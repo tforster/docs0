@@ -59,7 +59,7 @@ sequenceDiagram
   participant Pages as GitHub Pages
   Dev->>GH: push to main
   GH->>Runner: trigger Docs workflow
-  Runner->>Runner: docs0 docs → $RUNNER_TEMP/docs0/…/index.html
+  Runner->>Runner: docs0 docs → /tmp/docs0/…/index.html
   Runner->>Pages: upload that folder
   Pages-->>Dev: https://you.github.io/repo/
 ```

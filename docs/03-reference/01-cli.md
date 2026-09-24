@@ -59,6 +59,6 @@ $ docs0 docs --open=false
 Without `--out`, the file goes to `<os temp>/docs0/<project>-<hash>/index.html`: `<project>` comes from the nearest
 `package.json` name (or the folder name) and `<hash>` from the absolute docs path. Nothing is written into your repo, re-running
 overwrites the same file, and different projects never collide. The temp folder is `/tmp` on Linux, `$TMPDIR` on macOS,
-`%TEMP%` on Windows and `$RUNNER_TEMP` on GitHub Actions.
+`%TEMP%` on Windows (also `/tmp` on GitHub-hosted Linux runners).
 
 Warnings (broken image paths, broken links, links that leave the docs tree) are printed to stderr but do not fail the build.
