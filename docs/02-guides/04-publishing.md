@@ -42,10 +42,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npx --yes @tforster/docs0 docs --out=_site/index.html --open=false
+      - id: docs
+        run: npx --yes @tforster/docs0 docs
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: ${{ steps.docs.outputs.dir }}
       - id: deployment
         uses: actions/deploy-pages@v4
 ```
@@ -58,8 +59,8 @@ sequenceDiagram
   participant Pages as GitHub Pages
   Dev->>GH: push to main
   GH->>Runner: trigger Docs workflow
-  Runner->>Runner: docs0 docs --open=false
-  Runner->>Pages: upload _site/index.html
+  Runner->>Runner: docs0 docs → $RUNNER_TEMP/docs0/…/index.html
+  Runner->>Pages: upload that folder
   Pages-->>Dev: https://you.github.io/repo/
 ```
 
@@ -81,5 +82,5 @@ sequenceDiagram
 | Goal              | Command                                                   |
 | :---------------- | :-------------------------------------------------------- |
 | Local preview     | `docs0 docs`                                              |
-| Pages site root   | `docs0 docs --out=_site/index.html --open=false`          |
+| Pages site root   | `docs0 docs`, then upload `steps.<id>.outputs.dir`        |
 | Versioned archive | `docs0 docs --out=releases/docs-v1.2.0.html --open=false` |

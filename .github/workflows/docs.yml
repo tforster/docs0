@@ -32,9 +32,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: node dist/docs0.js docs --out=_site/index.html --open=false
+      # Same command as a local run: output lands in the OS temp folder and its location is exposed via GITHUB_OUTPUT
+      - id: docs
+        run: node dist/docs0.js docs
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: ${{ steps.docs.outputs.dir }}
       - id: deployment
         uses: actions/deploy-pages@v4

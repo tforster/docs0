@@ -17,6 +17,7 @@ import {
   prettify,
   folderLabel,
   gitDates,
+  defaultOut,
   findPackage,
   extractToc,
   esc,
@@ -93,6 +94,16 @@ describe("prettify", () => {
   });
 });
 
+describe("defaultOut", () => {
+  it("is a stable index.html per project under <tmp>/docs0", () => {
+    const a = defaultOut("/work/proj/docs", "@tforster/docs0", "/tmp");
+    assert.match(a, /^\/tmp\/docs0\/tforster-docs0-[0-9a-f]{8}\/index\.html$/);
+    assert.equal(defaultOut("/work/proj/docs", "@tforster/docs0", "/tmp"), a, "same root → same path");
+    assert.notEqual(defaultOut("/work/other/docs", "@tforster/docs0", "/tmp"), a, "different root → different path");
+    assert.match(defaultOut("/x", "!!!", "/tmp"), /\/docs-[0-9a-f]{8}\/index\.html$/);
+  });
+});
+
 describe("folderLabel", () => {
   it("uses the folder name, borrowing casing from the landing title when it contains the name", () => {
     assert.equal(folderLabel("iam", "IAM — Explanation"), "IAM");
@@ -116,7 +127,7 @@ describe("esc", () => {
 
 describe("parseArgs", () => {
   it("reads the root and defaults", () => {
-    assert.deepEqual(parseArgs(["docs"], {}), { root: "docs", out: "docs.html", open: true, help: false });
+    assert.deepEqual(parseArgs(["docs"], {}), { root: "docs", out: undefined, open: true, help: false });
   });
   it("accepts open=false with or without dashes, and --no-open", () => {
     for (const flag of ["open=false", "--open=false", "--no-open", "open=0", "--open=no"]) {
@@ -439,6 +450,30 @@ describe("CLI", () => {
     assert.match(stdout, /DOCS0 →/);
     assert.ok(existsSync(out));
     assert.match(readFileSync(out, "utf8"), /<h1 data-anchor="hi">Hi/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("defaults to the OS temp folder and reports file/dir to GITHUB_OUTPUT", () => {
+    const dir = mkdtempSync(join(tmpdir(), "docs0-cli-tmp-"));
+    writeTree(dir, { "docs/README.md": "# Hi\n", "gh-output": "" });
+    const env = {
+      ...process.env,
+      TMPDIR: join(dir, "t"),
+      TEMP: join(dir, "t"),
+      TMP: join(dir, "t"),
+      GITHUB_OUTPUT: join(dir, "gh-output"),
+    };
+    mkdirSync(env.TMPDIR);
+    execFileSync(process.execPath, [CLI, join(dir, "docs"), "--open=false"], { env, encoding: "utf8" });
+    const vars = Object.fromEntries(
+      readFileSync(env.GITHUB_OUTPUT, "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => l.split("=")),
+    );
+    assert.equal(vars.file, join(vars.dir, "index.html"));
+    assert.ok(vars.dir.startsWith(join(env.TMPDIR, "docs0")));
+    assert.ok(existsSync(vars.file));
     rmSync(dir, { recursive: true, force: true });
   });
 

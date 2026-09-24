@@ -21,7 +21,7 @@ Most documentation tools want a framework, a config file and a dev server. DOCS0
 | Navigate within a long page      | A sticky "On this page" sidebar built from your TOC |
 | See diagrams, not diagram source | Rendered [Mermaid](https://mermaid.js.org) diagrams |
 | Read code comfortably            | Syntax highlighting for 190+ languages              |
-| Share it                         | A single `docs.html` with everything embedded       |
+| Share it                         | One HTML file with everything embedded              |
 
 > [!TIP]
 > This very site is DOCS0 dogfooding its own `docs/` folder. Run `npm start` in the repo to rebuild it.

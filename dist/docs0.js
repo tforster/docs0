@@ -2,7 +2,7 @@
 /* eslint-disable no-console */
 // docs0.js — DOCS0 markdown documentation compiler
 //
-// Usage: docs0 <docs-root> [--out=docs.html] [--open=false]
+// Usage: docs0 <docs-root> [--out=file.html] [--open=false]
 //        npx @tforster/docs0 <docs-root>
 //
 // Walks the .md tree below <docs-root> and compiles it into ONE self-contained HTML file: CSS, JS, images (as data: URIs) and a
@@ -13,11 +13,13 @@
 // Dependencies: marked (Markdown → HTML), highlight.js (syntax highlighting), mermaid (diagrams, CDN with embedded fallback)
 
 // System dependencies
-import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, realpathSync } from "fs";
+import { readFileSync, writeFileSync, appendFileSync, readdirSync, statSync, existsSync, mkdirSync, realpathSync } from "fs";
 import { resolve, dirname, extname, relative, join, basename, sep } from "path";
 import { fileURLToPath } from "url";
 import { execFile, execFileSync } from "child_process";
 import { createRequire } from "module";
+import { tmpdir } from "os";
+import { createHash } from "crypto";
 
 // Third-party dependencies
 import { Marked } from "marked";
@@ -167,7 +169,8 @@ export function routeHref(route, anchor) {
  *
  * @param {string[]} argv - Arguments after the script path.
  * @param {Record<string, string|undefined>} [env] - Environment.
- * @returns {{ root: string|undefined, out: string, open: boolean, help: boolean }} Parsed options.
+ * @returns {{ root: string|undefined, out: string|undefined, open: boolean, help: boolean }} Parsed options; `out` is undefined
+ *   unless given, meaning "use the temp-folder default".
  */
 export function parseArgs(argv, env = process.env) {
   /** @type {Record<string, string>} */
@@ -182,7 +185,27 @@ export function parseArgs(argv, env = process.env) {
     else positional.push(arg);
   }
   const open = flags.open === undefined ? !env.CI : !/^(false|0|no|off)$/i.test(flags.open);
-  return { root: positional[0], out: flags.out || "docs.html", open, help: !!flags.help };
+  return { root: positional[0], out: flags.out || undefined, open, help: !!flags.help };
+}
+
+/**
+ * Default output location: `<os temp>/docs0/<site>-<hash>/index.html`. The hash of the absolute docs root keeps the path stable
+ * across runs (re-running refreshes the same file, so an open tab just needs a reload) and distinct between projects. Being an
+ * `index.html` in its own folder, the directory can be uploaded to GitHub Pages as-is.
+ *
+ * @param {string} root - Docs root.
+ * @param {string} siteName - Site name (package name or folder).
+ * @param {string} [tmp] - Temp directory, defaults to the OS one.
+ * @returns {string} Absolute output file path.
+ */
+export function defaultOut(root, siteName, tmp = tmpdir()) {
+  const slug =
+    siteName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "docs";
+  const hash = createHash("sha256").update(resolve(root)).digest("hex").slice(0, 8);
+  return join(tmp, "docs0", `${slug}-${hash}`, "index.html");
 }
 
 /**
@@ -534,7 +557,7 @@ function renderNav(node, depth = 0) {
  *
  * @param {string} rootArg - Path to the docs root.
  * @param {{ warn?: (msg: string) => void }} [options] - Options.
- * @returns {{ html: string, pages: Page[], version: string|null, warnings: string[] }} Build result.
+ * @returns {{ html: string, pages: Page[], siteName: string, version: string|null, warnings: string[] }} Build result.
  */
 export function build(rootArg, options = {}) {
   const root = resolve(rootArg);
@@ -595,14 +618,15 @@ ${body}
   });
 
   const pkg = findPackage(root);
+  const siteName = pkg.name ?? prettify(rootName);
   const html = buildHtml({
-    siteName: pkg.name ?? prettify(rootName),
+    siteName,
     version: pkg.version,
     nav: renderNav(tree),
     articles: articles.join("\n"),
     mermaid: anyMermaid,
   });
-  return { html, pages, version: pkg.version, warnings };
+  return { html, pages, siteName, version: pkg.version, warnings };
 }
 
 // ---------------------------------------------------------------------------
@@ -720,7 +744,7 @@ function openInBrowser(file) {
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help || !opts.root) {
-    console.error("Usage: docs0 <docs-root> [--out=docs.html] [--open=false]");
+    console.error("Usage: docs0 <docs-root> [--out=file.html] [--open=false]");
     process.exit(opts.help ? 0 : 1);
   }
 
@@ -733,9 +757,11 @@ function main() {
     process.exit(1);
   }
 
-  const out = resolve(opts.out);
+  const out = opts.out ? resolve(opts.out) : defaultOut(opts.root, result.siteName);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, result.html);
+  // Inside GitHub Actions, expose the location to later steps (e.g. upload-pages-artifact with: path: steps.<id>.outputs.dir)
+  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `file=${out}\ndir=${dirname(out)}\n`);
 
   const kb = (Buffer.byteLength(result.html) / 1024).toFixed(0);
   console.log(`\n📚  DOCS0 → ${out}`);

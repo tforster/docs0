@@ -29,4 +29,4 @@ journey
 ```
 
 1. [Installation](01-installation.md) — optional; `npx` works without installing anything
-2. [Quick Start](02-quick-start.md) — build your first `docs.html`
+2. [Quick Start](02-quick-start.md) — build and view your first site

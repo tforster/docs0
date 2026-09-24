@@ -35,7 +35,7 @@ npm install --save-dev @tforster/docs0
 {
   "scripts": {
     "docs": "docs0 docs",
-    "docs:build": "docs0 docs --out=_site/index.html --open=false"
+    "docs:build": "docs0 docs --out=build/docs.html --open=false"
   }
 }
 ```
@@ -44,7 +44,7 @@ npm install --save-dev @tforster/docs0
 
 ```console
 $ docs0 --help
-Usage: docs0 <docs-root> [--out=docs.html] [--open=false]
+Usage: docs0 <docs-root> [--out=file.html] [--open=false]
 ```
 
 > [!NOTE]

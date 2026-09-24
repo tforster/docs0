@@ -103,8 +103,8 @@ if __name__ == "__main__":
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-npx @tforster/docs0 docs --out="_site/index.html" --open=false
-echo "Built $(du -h _site/index.html | cut -f1) of docs"
+npx @tforster/docs0 docs --out="build/docs.html" --open=false
+echo "Built $(du -h build/docs.html | cut -f1) of docs"
 ```
 
 ```yaml

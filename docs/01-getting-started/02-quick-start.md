@@ -45,14 +45,13 @@ docs/
 npx @tforster/docs0 docs
 ```
 
-DOCS0 writes `docs.html` to the current directory and opens it in your default browser.
+DOCS0 writes a single HTML file to your OS temp folder and opens it in your default browser. Nothing is added to your repo, so
+this is also the quick way to read the docs of whatever project you are working on. Re-run it after editing and reload the tab.
 
-## 3. Build without opening
-
-Perfect for CI:
+## 3. Build to a chosen file without opening
 
 ```bash
-npx @tforster/docs0 docs --out=_site/index.html --open=false
+npx @tforster/docs0 docs --out=build/docs.html --open=false
 ```
 
 > [!IMPORTANT]
@@ -60,5 +59,5 @@ npx @tforster/docs0 docs --out=_site/index.html --open=false
 
 ## 4. Share it
 
-`docs.html` is fully self-contained. Attach it to an email, drop it in Slack, or publish it —
+The generated file is fully self-contained. Attach it to an email, drop it in Slack, or publish it —
 see [Publishing to GitHub Pages](../02-guides/04-publishing.md).

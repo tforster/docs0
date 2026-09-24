@@ -3,11 +3,17 @@
 DOCS0 turns a folder of Markdown into a documentation viewer delivered as **one self-contained HTML file**. Point it at a
 folder and run one command. No build step, no config file, no framework.
 
+**See it live**: [tforster.github.io/docs0](https://tforster.github.io/docs0/) is this repo's own `docs/` folder, built by
+DOCS0 itself (dogfooding).
+
 **Try it out**: from any repo that has a `docs/` folder:
 
 ```bash
 npx @tforster/docs0 docs
 ```
+
+Nothing is written into your repo. The HTML goes to your OS temp folder and opens in your browser, so you can view the docs you
+already have mid dev session without creating a copy of them.
 
 ## Table of Contents <!-- omit in toc -->
 
@@ -21,7 +27,7 @@ npx @tforster/docs0 docs
 
 ## 1. Features
 
-- **One command**: `npx @tforster/docs0 docs` builds `docs.html` and opens it
+- **One command**: `npx @tforster/docs0 docs` builds the site into your OS temp folder and opens it
 - **One file**: CSS, JS and images (as `data:` URIs) are embedded, plus an offline Mermaid fallback. Share it anywhere
 - **Folder → nav**: the folder hierarchy becomes a collapsible left nav, and numeric prefixes (`01-`) set the order
 - **Sticky in-page TOC**: a `## Table of Contents <!-- omit in toc -->` list becomes a right sidebar with scroll-spy
@@ -37,13 +43,17 @@ npx @tforster/docs0 docs
 ## 2. Usage
 
 ```bash
-docs0 <docs-root> [--out=docs.html] [--open=false]
+docs0 <docs-root> [--out=file.html] [--open=false]
 ```
 
 | Flag                          | Default     | Description                                    |
 | :---------------------------- | :---------- | :--------------------------------------------- |
-| `--out=<file>` / `out=<file>` | `docs.html` | Output path; folders are created               |
+| `--out=<file>` / `out=<file>` | temp folder | Output path; folders are created ¹             |
 | `--open=false` / `open=false` | `true`      | Don't open the browser (implied when `CI` set) |
+
+¹ By default: `<os temp>/docs0/<project>-<hash>/index.html`. The path is stable per docs folder, so re-running refreshes the
+same file and an open tab only needs a reload. Inside GitHub Actions the `file` and `dir` locations are also written to
+`GITHUB_OUTPUT`.
 
 ## 3. Writing Docs
 
@@ -65,14 +75,18 @@ element, see the [Markdown Showcase](docs/02-guides/02-markdown-showcase.md).
 **Settings → Pages → Source** to **GitHub Actions**. For your own repo use:
 
 ```yaml
-- run: npx --yes @tforster/docs0 docs --out=_site/index.html --open=false
+- id: docs
+  run: npx --yes @tforster/docs0 docs
+- uses: actions/upload-pages-artifact@v3
+  with:
+    path: ${{ steps.docs.outputs.dir }}
 ```
 
 ## 5. Development
 
 ```bash
 npm install
-npm start        # build ./docs → docs.html and open it (dogfooding)
+npm start        # build ./docs into the temp folder and open it (dogfooding)
 npm test         # node:test suite
 npm run lint     # oxlint
 npm run format   # oxfmt
