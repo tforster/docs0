@@ -30,6 +30,9 @@
     "vendor/mermaid.min.js"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "start": "node dist/docs0.js docs",
     "build": "node dist/docs0.js docs --open=false",
