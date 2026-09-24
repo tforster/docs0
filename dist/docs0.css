@@ -1,0 +1,864 @@
+/* docs0.css — Documentation reader styles
+ *
+ * Light and dark themes via :root[data-theme]. Fixed top bar, sticky left nav and right TOC. Tuned for reading, not presenting.
+ */
+
+/* ---------------------------------------------------------------------------
+ * Theme tokens
+ * --------------------------------------------------------------------------- */
+
+:root {
+  --topbar-h: 52px;
+  --nav-w: 280px;
+  --toc-w: 240px;
+  --measure: 78ch;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+
+  --bg: #ffffff;
+  --bg-soft: #f6f8fa;
+  --bg-hover: #eaeef2;
+  --border: #d0d7de;
+  --border-soft: #e5e9ee;
+  --text: #1f2328;
+  --text-soft: #424a53;
+  --text-muted: #6e7781;
+  --accent: #0969da;
+  --accent-soft: #ddf4ff;
+  --code-inline: #0550ae;
+  --shadow: 0 8px 24px rgb(140 149 159 / 20%);
+
+  --note: #0969da;
+  --tip: #1a7f37;
+  --warning: #9a6700;
+  --important: #8250df;
+  --caution: #cf222e;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d1117;
+  --bg-soft: #161b22;
+  --bg-hover: #1f2630;
+  --border: #30363d;
+  --border-soft: #21262d;
+  --text: #e6edf3;
+  --text-soft: #c9d1d9;
+  --text-muted: #8b949e;
+  --accent: #58a6ff;
+  --accent-soft: #132339;
+  --code-inline: #79c0ff;
+  --shadow: 0 8px 24px rgb(1 4 9 / 60%);
+
+  --note: #58a6ff;
+  --tip: #3fb950;
+  --warning: #d29922;
+  --important: #a371f7;
+  --caution: #f85149;
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------------------
+ * Reset & base
+ * --------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------------------------------------------------------------------------
+ * Top bar
+ * --------------------------------------------------------------------------- */
+
+#topbar {
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--topbar-h);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0 1rem;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+#brand {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.logo {
+  width: 26px;
+  height: 26px;
+  color: var(--accent);
+}
+
+#site-name {
+  color: var(--text-muted);
+  padding-left: 0.9rem;
+  border-left: 1px solid var(--border);
+}
+
+#current-path {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--text-soft);
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 0.15rem 0.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+#updated {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+#updated:empty {
+  display: none;
+}
+
+.spacer {
+  flex: 1;
+}
+
+#version {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+}
+
+#topbar button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: 1.05rem;
+}
+
+#topbar button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+#zen-toggle svg,
+#theme-toggle svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+:root[data-theme="dark"] .icon-moon,
+:root[data-theme="light"] .icon-sun,
+:root.zen .icon-expand,
+:root:not(.zen) .icon-collapse {
+  display: none;
+}
+
+#zen-toggle[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+#nav-toggle {
+  display: none !important;
+}
+
+/* ---------------------------------------------------------------------------
+ * Left nav
+ * --------------------------------------------------------------------------- */
+
+#nav {
+  position: fixed;
+  top: var(--topbar-h);
+  bottom: 0;
+  left: 0;
+  width: var(--nav-w);
+  overflow-y: auto;
+  padding: 1.25rem 0.75rem 2rem;
+  border-right: 1px solid var(--border-soft);
+  background: var(--bg);
+  font-size: 0.9rem;
+  z-index: 20;
+}
+
+.nav-list {
+  list-style: none;
+}
+
+.nav-list .nav-list {
+  margin-left: 0.85rem;
+  padding-left: 0.5rem;
+  border-left: 1px solid var(--border-soft);
+}
+
+.nav-link,
+.nav-label {
+  display: block;
+  padding: 0.28rem 0.6rem;
+  border-radius: 6px;
+  color: var(--text-soft);
+  text-decoration: none;
+  line-height: 1.45;
+}
+
+.nav-link:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.nav-link.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.nav-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+#nav summary {
+  display: flex;
+  align-items: center;
+  list-style: none;
+  cursor: pointer;
+  margin-top: 0.35rem;
+}
+
+#nav summary::-webkit-details-marker {
+  display: none;
+}
+
+#nav summary::before {
+  content: "";
+  flex: none;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin: 0 0.1rem 0 0.35rem;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+#nav details[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+#nav summary > * {
+  flex: 1;
+}
+
+#nav summary .nav-link {
+  font-weight: 600;
+  color: var(--text);
+}
+
+#scrim {
+  display: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Content layout
+ * --------------------------------------------------------------------------- */
+
+#content {
+  margin-left: var(--nav-w);
+  padding-top: var(--topbar-h);
+  min-height: 100vh;
+}
+
+.page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3rem;
+  max-width: calc(var(--measure) + var(--toc-w) + 7rem);
+  margin: 0 auto;
+  padding: 2.5rem 2.5rem 4rem;
+}
+
+.page[hidden] {
+  display: none;
+}
+
+.page.has-toc {
+  grid-template-columns: minmax(0, 1fr) var(--toc-w);
+}
+
+.page-main {
+  min-width: 0;
+  max-width: var(--measure);
+}
+
+/* ---------------------------------------------------------------------------
+ * Right TOC — sticky, scrolls independently when long
+ * --------------------------------------------------------------------------- */
+
+.page-toc {
+  position: sticky;
+  top: calc(var(--topbar-h) + 1.5rem);
+  align-self: start;
+  max-height: calc(100vh - var(--topbar-h) - 3rem);
+  overflow-y: auto;
+  font-size: 0.84rem;
+  border-left: 1px solid var(--border-soft);
+  padding-left: 1rem;
+}
+
+.toc-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.6rem;
+}
+
+.page-toc ul {
+  list-style: none;
+}
+
+.page-toc ul ul {
+  padding-left: 0.85rem;
+}
+
+.page-toc a {
+  display: block;
+  padding: 0.2rem 0;
+  color: var(--text-muted);
+  text-decoration: none;
+  line-height: 1.4;
+}
+
+.page-toc a:hover {
+  color: var(--text);
+}
+
+.page-toc a.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+ * Markdown typography
+ * --------------------------------------------------------------------------- */
+
+.markdown > * + * {
+  margin-top: 1rem;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  position: relative;
+  line-height: 1.3;
+  font-weight: 700;
+  scroll-margin-top: calc(var(--topbar-h) + 16px);
+}
+
+.markdown h1 {
+  font-size: 2.2rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin-bottom: 1.25rem;
+}
+
+.markdown h2 {
+  font-size: 1.55rem;
+  margin-top: 2.5rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.markdown h3 {
+  font-size: 1.22rem;
+  margin-top: 2rem;
+}
+
+.markdown h4 {
+  font-size: 1.05rem;
+  margin-top: 1.5rem;
+}
+
+.markdown h5,
+.markdown h6 {
+  font-size: 0.95rem;
+  margin-top: 1.25rem;
+  color: var(--text-soft);
+}
+
+.anchor {
+  margin-left: 0.4rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 400;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.markdown :is(h1, h2, h3, h4, h5, h6):hover .anchor,
+.anchor:focus {
+  opacity: 1;
+}
+
+.markdown p,
+.markdown li {
+  color: var(--text-soft);
+}
+
+.markdown a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.markdown a:hover {
+  text-decoration: underline;
+}
+
+.markdown strong {
+  color: var(--text);
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 1.6rem;
+}
+
+.markdown li + li,
+.markdown li > ul,
+.markdown li > ol {
+  margin-top: 0.3rem;
+}
+
+.markdown li::marker {
+  color: var(--text-muted);
+}
+
+/* GFM task lists */
+.markdown li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1.4rem;
+}
+
+.markdown input[type="checkbox"] {
+  margin-right: 0.5rem;
+  accent-color: var(--accent);
+}
+
+.markdown blockquote {
+  border-left: 4px solid var(--border);
+  padding: 0.25rem 1rem;
+  color: var(--text-muted);
+}
+
+.markdown blockquote p {
+  color: inherit;
+}
+
+.markdown hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2rem 0;
+}
+
+.markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.markdown p > img:only-child {
+  display: block;
+  margin-inline: auto;
+}
+
+.markdown details {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 1rem;
+  background: var(--bg-soft);
+}
+
+.markdown details > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.markdown details[open] > summary {
+  margin-bottom: 0.6rem;
+}
+
+.markdown kbd {
+  font-family: var(--mono);
+  font-size: 0.8em;
+  padding: 0.1em 0.45em;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--bg-soft);
+}
+
+.markdown mark {
+  background: #fff8c5;
+  color: #1f2328;
+  padding: 0 0.15em;
+  border-radius: 3px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Code
+ * --------------------------------------------------------------------------- */
+
+.markdown code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  background: var(--bg-soft);
+  color: var(--code-inline);
+  padding: 0.12em 0.38em;
+  border-radius: 5px;
+  border: 1px solid var(--border-soft);
+}
+
+.code {
+  position: relative;
+}
+
+.markdown pre {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.markdown pre code,
+:root[data-theme] .markdown pre code.hljs {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: var(--text);
+}
+
+.code-lang {
+  position: absolute;
+  top: 0.4rem;
+  right: 4.4rem;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: lowercase;
+  pointer-events: none;
+}
+
+.code-copy {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.4rem;
+  font: 600 0.72rem var(--font);
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-soft);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.code:hover .code-copy,
+.code-copy:focus {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------------------
+ * Tables
+ * --------------------------------------------------------------------------- */
+
+.markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.markdown th,
+.markdown td {
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.markdown th {
+  background: var(--bg-soft);
+  font-weight: 600;
+}
+
+.markdown tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--bg-soft) 60%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+ * Callouts  (GFM > [!NOTE] etc.)
+ * --------------------------------------------------------------------------- */
+
+.callout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.8rem 1.1rem;
+  border-radius: 8px;
+  border-left: 4px solid;
+  background: var(--bg-soft);
+}
+
+.callout p {
+  margin: 0;
+}
+
+.callout-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.callout-note {
+  border-color: var(--note);
+}
+.callout-note .callout-label {
+  color: var(--note);
+}
+.callout-tip {
+  border-color: var(--tip);
+}
+.callout-tip .callout-label {
+  color: var(--tip);
+}
+.callout-warning {
+  border-color: var(--warning);
+}
+.callout-warning .callout-label {
+  color: var(--warning);
+}
+.callout-important {
+  border-color: var(--important);
+}
+.callout-important .callout-label {
+  color: var(--important);
+}
+.callout-caution {
+  border-color: var(--caution);
+}
+.callout-caution .callout-label {
+  color: var(--caution);
+}
+
+/* ---------------------------------------------------------------------------
+ * Mermaid diagrams
+ * --------------------------------------------------------------------------- */
+
+.markdown pre.mermaid {
+  display: flex;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  padding: 1.25rem;
+  color: transparent; /* hide raw source until rendered */
+}
+
+.markdown pre.mermaid[data-rendered] {
+  color: inherit;
+}
+
+.markdown pre.mermaid.mermaid-error {
+  display: block;
+  color: var(--caution);
+  font-family: var(--mono);
+  white-space: pre;
+}
+
+.markdown pre.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* htmlLabels wrap text in <foreignObject><p>; undo markdown paragraph colouring */
+.markdown pre.mermaid p {
+  color: inherit;
+}
+
+/* ---------------------------------------------------------------------------
+ * Pager
+ * --------------------------------------------------------------------------- */
+
+.pager {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 4rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border-soft);
+}
+
+.pager a {
+  display: flex;
+  flex-direction: column;
+  max-width: 48%;
+  padding: 0.7rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.pager a:hover {
+  border-color: var(--accent);
+}
+
+.pager small {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.75rem;
+}
+
+.pager-next {
+  margin-left: auto;
+  text-align: right;
+}
+
+/* ---------------------------------------------------------------------------
+ * Zen mode — no sidebars, content spans the full width
+ * --------------------------------------------------------------------------- */
+
+:root.zen #nav,
+:root.zen #nav-toggle,
+:root.zen #scrim,
+:root.zen .page-toc {
+  display: none !important;
+}
+
+:root.zen #content {
+  margin-left: 0;
+}
+
+:root.zen .page,
+:root.zen .page.has-toc {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: none;
+}
+
+:root.zen .page-main {
+  max-width: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Responsive
+ * --------------------------------------------------------------------------- */
+
+@media (max-width: 1100px) {
+  .page.has-toc {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-toc {
+    display: none;
+  }
+}
+
+@media (max-width: 800px) {
+  #nav-toggle {
+    display: grid !important;
+  }
+
+  #site-name,
+  #updated {
+    display: none;
+  }
+
+  #nav {
+    transform: translateX(-100%);
+    transition: transform 0.2s;
+    box-shadow: var(--shadow);
+  }
+
+  body.nav-open #nav {
+    transform: none;
+  }
+
+  body.nav-open #scrim {
+    display: block;
+    position: fixed;
+    inset: var(--topbar-h) 0 0;
+    z-index: 15;
+    background: rgb(0 0 0 / 35%);
+  }
+
+  #content {
+    margin-left: 0;
+  }
+
+  .page {
+    padding: 1.5rem 1rem 3rem;
+  }
+}
+
+@media print {
+  #topbar,
+  #nav,
+  .page-toc,
+  .pager,
+  .code-copy {
+    display: none !important;
+  }
+
+  #content {
+    margin: 0;
+    padding: 0;
+  }
+}

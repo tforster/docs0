@@ -1,0 +1,52 @@
+{
+  "name": "@tforster/docs0",
+  "version": "0.1.0",
+  "description": "Lean markdown-folder-to-single-HTML documentation viewer. Two dependencies. Zero nonsense.",
+  "keywords": [
+    "cli",
+    "docs",
+    "documentation",
+    "highlight",
+    "markdown",
+    "mermaid",
+    "single-file"
+  ],
+  "homepage": "https://github.com/tforster/docs0#readme",
+  "bugs": {
+    "url": "https://github.com/tforster/docs0/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tforster/docs0.git"
+  },
+  "bin": {
+    "docs0": "./dist/docs0.js"
+  },
+  "files": [
+    "dist/docs0.js",
+    "dist/docs0.client.js",
+    "dist/docs0.css",
+    "vendor/mermaid.min.js"
+  ],
+  "type": "module",
+  "scripts": {
+    "start": "node dist/docs0.js docs",
+    "build": "node dist/docs0.js docs --open=false",
+    "test": "node --test",
+    "lint": "oxlint",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check"
+  },
+  "dependencies": {
+    "highlight.js": "^11.11.1",
+    "marked": "^15.0.0"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.70.0",
+    "oxlint": "^1.85.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
