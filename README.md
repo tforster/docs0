@@ -91,14 +91,19 @@ element, see the [Markdown Showcase](docs/02-guides/02-markdown-showcase.md).
 ```bash
 npm install
 npm start        # build ./docs into the temp folder and open it (dogfooding)
-npm test         # node:test suite
-npm run lint     # oxlint
-npm run format   # oxfmt
+npm test          # node:test suite
+npm run lint      # oxlint
+npm run format    # oxfmt
+npm run typecheck # tsc over the JSDoc types (no build step)
+node dist/docs0.js docs --watch   # rebuild ./docs on save while editing
 ```
 
 | File                    | Role                                                    |
 | :---------------------- | :------------------------------------------------------ |
-| `dist/docs0.js`         | CLI and build (walk → lex → render → assemble)          |
+| `dist/docs0.js`         | CLI, scan, worker pool, cache, assembly, watch          |
+| `dist/docs0.render.js`  | Renders one page (marked + highlight.js)                |
+| `dist/docs0.worker.js`  | Worker-thread wrapper around the page renderer          |
+| `dist/docs0.shared.js`  | Dependency-free helpers used by both                    |
 | `dist/docs0.client.js`  | In-browser router, scroll-spy, theme, mermaid (inlined) |
 | `dist/docs0.css`        | Reader styles (inlined)                                 |
 | `vendor/mermaid.min.js` | Offline mermaid fallback (embedded only when needed)    |

@@ -5,8 +5,10 @@
 - [Quick Start](#quick-start)
   - [1. Create a docs folder](#1-create-a-docs-folder)
   - [2. Build and open](#2-build-and-open)
-  - [3. Build without opening](#3-build-without-opening)
-  - [4. Share it](#4-share-it)
+  - [3. Watch while you write](#3-watch-while-you-write)
+  - [4. Build without opening](#4-build-without-opening)
+  - [5. Check for broken links](#5-check-for-broken-links)
+  - [6. Share it](#6-share-it)
 
 ## 1. Create a docs folder
 
@@ -45,19 +47,45 @@ docs/
 npx @tforster/docs0 docs
 ```
 
-DOCS0 writes a single HTML file to your OS temp folder and opens it in your default browser. Nothing is added to your repo, so
-this is also the quick way to read the docs of whatever project you are working on. Re-run it after editing and reload the tab.
+DOCS0 writes the site to `<os temp>/docs0/<project>-<hash>/index.html` and opens it in your default browser. Your repo stays
+clean, and re-running refreshes the same file.
 
-## 3. Build to a chosen file without opening
+## 3. Watch while you write
 
 ```bash
-npx @tforster/docs0 docs --out=build/docs.html --open=false
+npx @tforster/docs0 docs --watch
+```
+
+DOCS0 builds and opens the site once, then keeps running. Each time you save a `.md` file or an image, it re-renders only the
+affected pages (usually in tens of milliseconds) and rewrites the same file. Refresh the tab to see the change. Press Ctrl-C to
+stop. See [Watch mode](../03-reference/01-cli.md#watch-mode).
+
+## 4. Build without opening
+
+Perfect for CI:
+
+```bash
+npx @tforster/docs0 docs --out=_site/index.html --open=false
 ```
 
 > [!IMPORTANT]
 > When the `CI` environment variable is set (as it is on GitHub Actions), DOCS0 skips opening a browser automatically.
 
-## 4. Share it
+## 5. Check for broken links
 
-The generated file is fully self-contained. Attach it to an email, drop it in Slack, or publish it —
+The build summary counts problems such as broken `.md` links and missing images:
+
+```console
+   13 pages from /home/me/project/docs · 3190 KB · 160 ms · 2 warnings (-v to list)
+```
+
+Add `-v` (or `--verbose`) to list each one with its file:
+
+```bash
+npx @tforster/docs0 docs -v
+```
+
+## 6. Share it
+
+The output file is fully self-contained. Attach it to an email, drop it in Slack, or publish it —
 see [Publishing to GitHub Pages](../02-guides/04-publishing.md).

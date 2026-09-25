@@ -48,7 +48,7 @@ Flags may be written with or without the leading `--`.
 
 | Code | Meaning                                                  |
 | ---: | :------------------------------------------------------- |
-|  `0` | Success                                                  |
+|  `0` | Success, or `--watch` stopped with Ctrl-C                |
 |  `1` | Missing argument, docs root not found, or no `.md` files |
 
 ## Output

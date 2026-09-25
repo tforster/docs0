@@ -1,4 +1,4 @@
-# Installation <!-- omit in toc -->
+# Installation
 
 ## Table of Contents <!-- omit in toc -->
 
@@ -35,7 +35,8 @@ npm install --save-dev @tforster/docs0
 {
   "scripts": {
     "docs": "docs0 docs",
-    "docs:build": "docs0 docs --out=build/docs.html --open=false"
+    "docs:watch": "docs0 docs --watch",
+    "docs:build": "docs0 docs --out=_site/index.html --open=false"
   }
 }
 ```
@@ -44,7 +45,7 @@ npm install --save-dev @tforster/docs0
 
 ```console
 $ docs0 --help
-Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N]
+Usage: docs0 <docs-root> [--out=docs.html] [--open=false]
 ```
 
 > [!NOTE]

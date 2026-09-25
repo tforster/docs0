@@ -21,6 +21,7 @@ Most documentation tools want a framework, a config file and a dev server. DOCS0
 | Navigate within a long page      | A sticky "On this page" sidebar built from your TOC |
 | See diagrams, not diagram source | Rendered [Mermaid](https://mermaid.js.org) diagrams |
 | Read code comfortably            | Syntax highlighting for 190+ languages              |
+| Preview as you edit              | `--watch` rebuilds only what changed on each save   |
 | Share it                         | One HTML file with everything embedded              |
 
 > [!TIP]
@@ -33,10 +34,11 @@ flowchart LR
   A[docs/ folder] -->|walk| B(Page tree)
   B -->|marked + highlight.js| C(HTML pages)
   C --> D{Inline assets}
-  D -->|images → data: URIs| E[docs.html]
+  D -->|images → data: URIs| E[index.html]
   D -->|CSS + JS + mermaid| E
   E -->|open=true| F([Browser])
   E -->|open=false| G([GitHub Pages])
+  A -.->|save, with --watch| B
 ```
 
 Every page is rendered at build time. In the browser a tiny hash router shows one page at a time, so links like
