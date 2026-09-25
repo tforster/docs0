@@ -9,11 +9,11 @@
   const root = document.documentElement;
   const nav = document.getElementById("nav");
   const pathEl = document.getElementById("current-path");
-  const updatedEl = document.getElementById("updated");
+  const updatedEl = /** @type {HTMLTimeElement} */ (document.getElementById("updated"));
   const navToggle = document.getElementById("nav-toggle");
-  const pages = [...document.querySelectorAll(".page")];
+  const pages = /** @type {HTMLElement[]} */ ([...document.querySelectorAll(".page")]);
   const byRoute = new Map(pages.map((p) => [p.dataset.route, p]));
-  const navLinks = [...nav.querySelectorAll("a[data-route]")];
+  const navLinks = /** @type {HTMLAnchorElement[]} */ ([...nav.querySelectorAll("a[data-route]")]);
   const TOP_OFFSET = 80;
 
   /** @type {HTMLElement|null} */
@@ -102,7 +102,7 @@
 
   // Re-clicking the link for the current hash does not fire hashchange; route manually so the anchor is scrolled to again
   document.addEventListener("click", (e) => {
-    const a = e.target.closest("a[href^='#']");
+    const a = /** @type {Element} */ (e.target).closest("a[href^='#']");
     if (a && a.getAttribute("href") === location.hash) {
       e.preventDefault();
       route();
@@ -111,7 +111,7 @@
 
   // Folder rows: clicking a folder's landing link navigates and keeps the folder open rather than collapsing it
   nav.addEventListener("click", (e) => {
-    const a = e.target.closest("summary a");
+    const a = /** @type {Element} */ (e.target).closest("summary a");
     if (!a) return;
     e.preventDefault();
     a.closest("details").open = true;
@@ -243,7 +243,7 @@
   // ---------------------------------------------------------------------------
 
   document.addEventListener("click", async (e) => {
-    const btn = e.target.closest(".code-copy");
+    const btn = /** @type {Element} */ (e.target).closest(".code-copy");
     if (!btn) return;
     try {
       await navigator.clipboard.writeText(btn.parentElement.querySelector("code").innerText);

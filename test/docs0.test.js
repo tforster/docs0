@@ -562,7 +562,7 @@ describe("CLI", () => {
   it("exits 1 with usage when the root is missing", () => {
     assert.throws(
       () => execFileSync(process.execPath, [CLI], { stdio: "pipe" }),
-      (err) => err.status === 1 && /Usage: docs0/.test(err.stderr.toString()),
+      (/** @type {any} */ err) => err.status === 1 && /Usage: docs0/.test(err.stderr.toString()),
     );
   });
 

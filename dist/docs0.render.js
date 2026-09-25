@@ -59,7 +59,7 @@ export function extractToc(tokens) {
   while (tokens[j]?.type === "space") j++;
   if (tokens[j]?.type !== "list") return null;
   const [list] = tokens.splice(i, j - i + 1).slice(-1);
-  return Object.assign([list], { links: tokens.links });
+  return Object.assign([list], { links: /** @type {any} */ (tokens).links });
 }
 
 /**
@@ -182,7 +182,7 @@ export function createPageRenderer() {
       /**
        * Renders a link, routing relative .md targets through the SPA and opening external links in a new tab.
        *
-       * @param {{ href: string, title: string|null, tokens: any[] }} token
+       * @param {{ href: string, title?: string|null, tokens: any[] }} token
        * @returns {string} HTML string.
        */
       link({ href, title, tokens }) {
@@ -197,7 +197,7 @@ export function createPageRenderer() {
       /**
        * Renders an image with local sources inlined.
        *
-       * @param {{ href: string, title: string|null, text: string }} token
+       * @param {{ href: string, title?: string|null, text: string }} token
        * @returns {string} HTML string.
        */
       image({ href, title, text }) {
@@ -217,7 +217,7 @@ export function createPageRenderer() {
       /**
        * Renders a fenced code block with highlight.js token colouring. Mermaid blocks are escaped and left for the client.
        *
-       * @param {{ text: string, lang: string }} token
+       * @param {{ text: string, lang?: string }} token
        * @returns {string} HTML string.
        */
       code({ text, lang }) {
@@ -244,8 +244,10 @@ export function createPageRenderer() {
     render({ file, route }) {
       Object.assign(ctx, { file, route, slugs: new Map(), mermaid: false, warnings: [], images: new Set(), links: new Set() });
       const tokens = marked.lexer(readFileSync(file, "utf8"));
-      const h1 = tokens.find((t) => t.type === "heading" && t.depth === 1);
-      const title = (h1 && plainText(plain.parseInline(h1.text))) || prettify(basename(file));
+      const h1 = /** @type {import("marked").Tokens.Heading|undefined} */ (
+        tokens.find((t) => t.type === "heading" && t.depth === 1)
+      );
+      const title = (h1 && plainText(/** @type {string} */ (plain.parseInline(h1.text)))) || prettify(basename(file));
       const tocTokens = extractToc(tokens);
       const body = applyCallouts(marked.parser(tokens));
       const toc = tocTokens ? marked.parser(tocTokens) : "";
