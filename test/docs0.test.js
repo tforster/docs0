@@ -127,7 +127,7 @@ describe("esc", () => {
 
 describe("parseArgs", () => {
   it("reads the root and defaults", () => {
-    assert.deepEqual(parseArgs(["docs"], {}), { root: "docs", out: undefined, open: true, help: false });
+    assert.deepEqual(parseArgs(["docs"], {}), { root: "docs", out: undefined, open: true, verbose: false, help: false });
   });
   it("accepts open=false with or without dashes, and --no-open", () => {
     for (const flag of ["open=false", "--open=false", "--no-open", "open=0", "--open=no"]) {
@@ -144,6 +144,9 @@ describe("parseArgs", () => {
   });
   it("flags help", () => {
     assert.equal(parseArgs(["--help"], {}).help, true);
+    assert.equal(parseArgs(["docs", "-v"], {}).verbose, true);
+    assert.equal(parseArgs(["--verbose", "docs"], {}).verbose, true);
+    assert.equal(parseArgs(["--verbose", "docs"], {}).root, "docs");
     assert.equal(parseArgs([], {}).root, undefined);
   });
 });
@@ -484,9 +487,23 @@ describe("CLI", () => {
     );
   });
 
+  it("lists warnings only with --verbose, otherwise counts them in the summary", () => {
+    const dir = mkdtempSync(join(tmpdir(), "docs0-cli-v-"));
+    writeTree(dir, { "docs/README.md": "# Hi\n\n[a](nope.md) [b](gone.md)\n" });
+    const args = [CLI, join(dir, "docs"), `--out=${join(dir, "o.html")}`, "--open=false"];
+    const quiet = spawnSync(process.execPath, args, { encoding: "utf8" });
+    assert.equal(quiet.status, 0);
+    assert.equal(quiet.stderr, "");
+    assert.match(quiet.stdout, /· 2 warnings \(-v to list\)/);
+    const loud = spawnSync(process.execPath, [...args, "-v"], { encoding: "utf8" });
+    assert.equal(loud.stderr.match(/docs0: warning:/g)?.length, 2);
+    assert.doesNotMatch(loud.stdout, /-v to list/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("builds this repo's docs without warnings", () => {
     const out = join(mkdtempSync(join(tmpdir(), "docs0-self-")), "docs.html");
-    const res = spawnSync(process.execPath, [CLI, resolve(dirname(CLI), "../docs"), `--out=${out}`, "--open=false"], {
+    const res = spawnSync(process.execPath, [CLI, resolve(dirname(CLI), "../docs"), `--out=${out}`, "--open=false", "-v"], {
       encoding: "utf8",
     });
     assert.equal(res.status, 0);

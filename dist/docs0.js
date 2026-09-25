@@ -2,7 +2,7 @@
 /* eslint-disable no-console */
 // docs0.js — DOCS0 markdown documentation compiler
 //
-// Usage: docs0 <docs-root> [--out=file.html] [--open=false]
+// Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-v|--verbose]
 //        npx @tforster/docs0 <docs-root>
 //
 // Walks the .md tree below <docs-root> and compiles it into ONE self-contained HTML file: CSS, JS, images (as data: URIs) and a
@@ -164,12 +164,12 @@ export function routeHref(route, anchor) {
 }
 
 /**
- * Parses CLI arguments. Accepts `--open=false`, `open=false`, `--no-open`, `--out=file` and `out=file`.
+ * Parses CLI arguments. Accepts `--open=false`, `open=false`, `--no-open`, `--out=file`, `out=file` and `-v`/`--verbose`.
  * Opening defaults to off when the CI environment variable is set.
  *
  * @param {string[]} argv - Arguments after the script path.
  * @param {Record<string, string|undefined>} [env] - Environment.
- * @returns {{ root: string|undefined, out: string|undefined, open: boolean, help: boolean }} Parsed options; `out` is undefined
+ * @returns {{ root: string|undefined, out: string|undefined, open: boolean, verbose: boolean, help: boolean }} Parsed options; `out` is undefined
  *   unless given, meaning "use the temp-folder default".
  */
 export function parseArgs(argv, env = process.env) {
@@ -181,11 +181,12 @@ export function parseArgs(argv, env = process.env) {
     if (arg === "--no-open") flags.open = "false";
     else if (arg === "--open") flags.open = "true";
     else if (arg === "-h" || arg === "--help") flags.help = "true";
+    else if (arg === "-v" || arg === "--verbose") flags.verbose = "true";
     else if (m) flags[m[1]] = m[2];
     else positional.push(arg);
   }
   const open = flags.open === undefined ? !env.CI : !/^(false|0|no|off)$/i.test(flags.open);
-  return { root: positional[0], out: flags.out || undefined, open, help: !!flags.help };
+  return { root: positional[0], out: flags.out || undefined, open, verbose: !!flags.verbose, help: !!flags.help };
 }
 
 /**
@@ -744,14 +745,15 @@ function openInBrowser(file) {
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help || !opts.root) {
-    console.error("Usage: docs0 <docs-root> [--out=file.html] [--open=false]");
+    console.error("Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-v|--verbose]");
     process.exit(opts.help ? 0 : 1);
   }
 
   const started = performance.now();
   let result;
   try {
-    result = build(opts.root, { warn: (msg) => console.warn(`docs0: warning: ${msg}`) });
+    // Warnings (broken links, missing images) are listed only with --verbose; otherwise just counted in the summary
+    result = build(opts.root, { warn: opts.verbose ? (msg) => console.warn(`docs0: warning: ${msg}`) : undefined });
   } catch (err) {
     console.error(`docs0: ${/** @type {Error} */ (err).message}`);
     process.exit(1);
@@ -764,9 +766,11 @@ function main() {
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `file=${out}\ndir=${dirname(out)}\n`);
 
   const kb = (Buffer.byteLength(result.html) / 1024).toFixed(0);
+  const n = result.warnings.length;
+  const hint = n && !opts.verbose ? ` · ${n} warning${n === 1 ? "" : "s"} (-v to list)` : "";
   console.log(`\n📚  DOCS0 → ${out}`);
   console.log(
-    `   ${result.pages.length} pages from ${resolve(opts.root)} · ${kb} KB · ${(performance.now() - started).toFixed(0)} ms\n`,
+    `   ${result.pages.length} pages from ${resolve(opts.root)} · ${kb} KB · ${(performance.now() - started).toFixed(0)} ms${hint}\n`,
   );
   if (opts.open) openInBrowser(out);
 }

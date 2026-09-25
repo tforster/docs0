@@ -13,7 +13,7 @@
 ## Synopsis
 
 ```bash
-docs0 <docs-root> [--out=file.html] [--open=false]
+docs0 <docs-root> [--out=file.html] [--open=false] [-v|--verbose]
 ```
 
 ## Arguments
@@ -31,6 +31,7 @@ Flags may be written with or without the leading `--`.
 | `--out=<file>` / `out=<file>` | temp folder | Output path, relative to the current directory. Folders are created. See [Output](#output). |
 | `--open=false` / `open=false` | `true`      | Skip opening the result in the default browser.                                             |
 | `--no-open`                   |             | Same as `--open=false`.                                                                     |
+| `-v`, `--verbose`             | `false`     | List each warning (broken link, missing image). Otherwise only a count is shown.            |
 | `-h`, `--help`                |             | Print usage and exit.                                                                       |
 
 ## Environment
@@ -55,6 +56,8 @@ $ docs0 docs --open=false
 📚  DOCS0 → /tmp/docs0/my-project-3f9a1c2e/index.html
    13 pages from /home/me/project/docs · 3190 KB · 85 ms
 ```
+
+When there are warnings and `--verbose` is off, the summary ends with `· 3 warnings (-v to list)`.
 
 Without `--out`, the file goes to `<os temp>/docs0/<project>-<hash>/index.html`: `<project>` comes from the nearest
 `package.json` name (or the folder name) and `<hash>` from the absolute docs path. Nothing is written into your repo, re-running

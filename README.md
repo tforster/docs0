@@ -43,13 +43,14 @@ already have mid dev session without creating a copy of them.
 ## 2. Usage
 
 ```bash
-docs0 <docs-root> [--out=file.html] [--open=false]
+docs0 <docs-root> [--out=file.html] [--open=false] [-v|--verbose]
 ```
 
 | Flag                          | Default     | Description                                    |
 | :---------------------------- | :---------- | :--------------------------------------------- |
 | `--out=<file>` / `out=<file>` | temp folder | Output path; folders are created ¹             |
 | `--open=false` / `open=false` | `true`      | Don't open the browser (implied when `CI` set) |
+| `-v` / `--verbose`            | `false`     | List warnings (broken links, missing images)   |
 
 ¹ By default: `<os temp>/docs0/<project>-<hash>/index.html`. The path is stable per docs folder, so re-running refreshes the
 same file and an open tab only needs a reload. Inside GitHub Actions the `file` and `dir` locations are also written to
