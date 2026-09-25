@@ -25,6 +25,9 @@
   },
   "files": [
     "dist/docs0.js",
+    "dist/docs0.shared.js",
+    "dist/docs0.render.js",
+    "dist/docs0.worker.js",
     "dist/docs0.client.js",
     "dist/docs0.css",
     "vendor/mermaid.min.js"
@@ -50,6 +53,6 @@
     "oxlint": "^1.85.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }

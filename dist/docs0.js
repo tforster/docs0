@@ -2,7 +2,7 @@
 /* eslint-disable no-console */
 // docs0.js — DOCS0 markdown documentation compiler
 //
-// Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-v|--verbose]
+// Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N]
 //        npx @tforster/docs0 <docs-root>
 //
 // Walks the .md tree below <docs-root> and compiles it into ONE self-contained HTML file: CSS, JS, images (as data: URIs) and a
@@ -10,20 +10,36 @@
 // `## Table of Contents <!-- omit in toc -->` list becomes a sticky right sidebar, and hash routing (#/folder/page/section)
 // switches pages without a server. The output opens in the default browser unless open=false (e.g. in CI).
 //
+// Pages are rendered by docs0.render.js — inline for small trees, on a pool of worker threads (docs0.worker.js) for large ones —
+// and cached, so --watch only re-renders what a change affects before reassembling the file.
+//
 // Dependencies: marked (Markdown → HTML), highlight.js (syntax highlighting), mermaid (diagrams, CDN with embedded fallback)
 
 // System dependencies
-import { readFileSync, writeFileSync, appendFileSync, readdirSync, statSync, existsSync, mkdirSync, realpathSync } from "fs";
+import {
+  readFileSync,
+  writeFileSync,
+  appendFileSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  watch,
+} from "fs";
 import { resolve, dirname, extname, relative, join, basename, sep } from "path";
 import { fileURLToPath } from "url";
 import { execFile, execFileSync } from "child_process";
 import { createRequire } from "module";
-import { tmpdir } from "os";
+import { tmpdir, availableParallelism } from "os";
 import { createHash } from "crypto";
+import { Worker } from "worker_threads";
 
-// Third-party dependencies
-import { Marked } from "marked";
-import hljs from "highlight.js";
+// Project dependencies
+import { IMAGE_MIME, esc, githubSlug, stripOrder, prettify, routeHref } from "./docs0.shared.js";
+
+export { esc, githubSlug, prettify, routeHref };
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -33,90 +49,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const MERMAID_CDN = "https://cdn.jsdelivr.net/npm/mermaid@11.13.0/dist/mermaid.min.js";
 const IGNORED_DIRS = new Set(["node_modules"]);
 const LANDING_RE = /^(readme|index)\.md$/i;
-const TOC_RE = /^table of contents\b/i;
-
-/** @type {Record<string, string>} Web-safe image types that get inlined as data: URIs. */
-const IMAGE_MIME = {
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".avif": "image/avif",
-  ".ico": "image/x-icon",
-};
+/** Below this many pages, worker start-up costs more than it saves, so pages render on the main thread. */
+const WORKER_THRESHOLD = 40;
+/** Quiet period after the last file-system event before a watch rebuild starts. */
+const DEBOUNCE_MS = 75;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Escapes a string for safe use in HTML text and attribute values.
- *
- * @param {string} s - Raw text.
- * @returns {string} Escaped text.
- */
-export function esc(s) {
-  return String(s ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-/**
- * Reduces rendered inline HTML to plain text (tags and comments stripped, common entities decoded).
- *
- * @param {string} html - Inline HTML.
- * @returns {string} Plain text.
- */
-function plainText(html) {
-  return html
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&")
-    .trim();
-}
-
-/**
- * Produces a GitHub-compatible heading slug so hand-written TOC links (e.g. `#1-features`) resolve.
- *
- * @param {string} text - Plain heading text.
- * @returns {string} Slug.
- */
-export function githubSlug(text) {
-  return text
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, "")
-    .replace(/ /g, "-");
-}
-
-/**
- * Strips an ordering prefix such as `01-` or `2_` from a file or folder name.
- *
- * @param {string} name - File or folder name.
- * @returns {string} Name without prefix.
- */
-function stripOrder(name) {
-  return name.replace(/^\d+[-_. ]+/, "");
-}
-
-/**
- * Turns a file or folder name into a human label: `02-getting_started.md` → `Getting started`.
- *
- * @param {string} name - File or folder name.
- * @returns {string} Label.
- */
-export function prettify(name) {
-  const s = stripOrder(name.replace(/\.md$/i, "")).replace(/[-_]+/g, " ").trim();
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
 
 /**
  * Labels a folder in the nav. The folder name is the source of truth (it is unique among siblings, whereas README titles often
@@ -153,40 +93,40 @@ export function routeFromRel(rel) {
 }
 
 /**
- * Builds a hash href for a route and optional in-page anchor.
- *
- * @param {string} route - Page route.
- * @param {string} [anchor] - Heading slug.
- * @returns {string} Hash href.
- */
-export function routeHref(route, anchor) {
-  return "#/" + [route, anchor].filter(Boolean).join("/");
-}
-
-/**
- * Parses CLI arguments. Accepts `--open=false`, `open=false`, `--no-open`, `--out=file`, `out=file` and `-v`/`--verbose`.
- * Opening defaults to off when the CI environment variable is set.
+ * Parses CLI arguments. Accepts `--open=false`, `open=false`, `--no-open`, `--out=file`, `out=file`, `-w`/`--watch`,
+ * `-v`/`--verbose` and `--workers=N`/`workers=N`. Opening defaults to off when the CI environment variable is set.
  *
  * @param {string[]} argv - Arguments after the script path.
  * @param {Record<string, string|undefined>} [env] - Environment.
- * @returns {{ root: string|undefined, out: string|undefined, open: boolean, verbose: boolean, help: boolean }} Parsed options; `out` is undefined
- *   unless given, meaning "use the temp-folder default".
+ * @returns {{ root: string|undefined, out: string|undefined, open: boolean, watch: boolean, verbose: boolean,
+ *   workers: number|undefined, help: boolean }} Parsed options; `out` is undefined unless given, meaning "use the temp-folder
+ *   default", and `workers` is undefined unless given, meaning "decide from the page count".
  */
 export function parseArgs(argv, env = process.env) {
   /** @type {Record<string, string>} */
   const flags = {};
   const positional = [];
   for (const arg of argv) {
-    const m = arg.match(/^(?:--)?(open|out)=(.*)$/);
+    const m = arg.match(/^(?:--)?(open|out|workers)=(.*)$/);
     if (arg === "--no-open") flags.open = "false";
     else if (arg === "--open") flags.open = "true";
     else if (arg === "-h" || arg === "--help") flags.help = "true";
     else if (arg === "-v" || arg === "--verbose") flags.verbose = "true";
+    else if (arg === "-w" || arg === "--watch") flags.watch = "true";
     else if (m) flags[m[1]] = m[2];
     else positional.push(arg);
   }
   const open = flags.open === undefined ? !env.CI : !/^(false|0|no|off)$/i.test(flags.open);
-  return { root: positional[0], out: flags.out || undefined, open, verbose: !!flags.verbose, help: !!flags.help };
+  const workers = /^\d+$/.test(flags.workers ?? "") ? Number(flags.workers) : undefined;
+  return {
+    root: positional[0],
+    out: flags.out || undefined,
+    open,
+    watch: !!flags.watch,
+    verbose: !!flags.verbose,
+    workers,
+    help: !!flags.help,
+  };
 }
 
 /**
@@ -241,43 +181,17 @@ function isoDate(d) {
 }
 
 /**
- * Collects last-commit dates (yyyy-mm-dd) for committed, unmodified files below a directory in one pass over git history.
- * Files that are untracked or have uncommitted changes are left out so callers fall back to mtime. Returns an empty map when
- * git or a repository is unavailable. Works in jj colocated repos, whose commits live in git.
+ * Stats a path, returning null when it vanished (files can disappear between readdir and stat while an editor saves).
  *
- * @param {string} dir - Absolute directory.
- * @returns {Map<string, string>} Absolute path → yyyy-mm-dd.
+ * @param {string} abs - Absolute path.
+ * @returns {import("fs").Stats|null} Stats.
  */
-export function gitDates(dir) {
-  /** @type {Map<string, string>} */
-  const dates = new Map();
-  const git = (/** @type {string[]} */ args) =>
-    execFileSync("git", ["-C", dir, "-c", "core.quotePath=false", ...args], {
-      stdio: ["ignore", "pipe", "ignore"],
-      maxBuffer: 256 * 1024 * 1024,
-    }).toString();
+function statOrNull(abs) {
   try {
-    const top = git(["rev-parse", "--show-toplevel"]).trim();
-    // Porcelain -z: "XY path\0", with renames/copies followed by an extra "orig\0"
-    const dirty = new Set();
-    const status = git(["status", "--porcelain", "-z", "--untracked-files=all", "--", "."]).split("\0");
-    for (let i = 0; i < status.length; i++) {
-      if (status[i].length < 4) continue;
-      dirty.add(join(top, status[i].slice(3)));
-      if (/^[RC]/.test(status[i])) i++;
-    }
-    // Newest commits first, so the first date seen for a file is its latest
-    for (const chunk of git(["log", "--format=%x00%cs", "--name-only", "--no-renames", "--", "."]).split("\0").slice(1)) {
-      const [date, ...files] = chunk.split("\n").filter(Boolean);
-      for (const f of files) {
-        const abs = join(top, f);
-        if (!dates.has(abs) && !dirty.has(abs)) dates.set(abs, date);
-      }
-    }
+    return statSync(abs);
   } catch {
-    // Not a git checkout or git missing — every file falls back to mtime
+    return null;
   }
-  return dates;
 }
 
 // ---------------------------------------------------------------------------
@@ -286,31 +200,34 @@ export function gitDates(dir) {
 
 /**
  * @typedef {object} Page
- * @property {string} file   Absolute path to the .md file.
- * @property {string} rel    Docs-root-relative path with `/` separators.
- * @property {string} route  Hash route.
- * @property {string} title  First H1, or prettified filename.
- * @property {any[]}  tokens marked token list.
- * @property {string} updated Last-updated date, yyyy-mm-dd.
+ * @property {string} file    Absolute path to the .md file.
+ * @property {string} rel     Docs-root-relative path with `/` separators.
+ * @property {string} route   Hash route.
+ * @property {string} title   First H1, or prettified filename (set once rendered).
+ * @property {string} updated Last-updated date (file modified time), yyyy-mm-dd.
+ * @property {string} stamp   Modified time and size; a changed stamp means the page must be re-rendered.
  *
  * @typedef {object} DirNode
  * @property {"dir"} type    Node discriminator.
  * @property {string} name   Folder name.
  * @property {Page|null} landing README/index page for the folder.
  * @property {Array<DirNode|{type:"page", page: Page}>} children Sub-folders and pages in nav order.
+ *
+ * @typedef {import("./docs0.render.js").PageResult} PageResult
  */
 
 /**
  * Recursively collects .md files, skipping dotfiles and node_modules. Folders with no markdown are omitted. At every level the
  * landing page comes first, then loose files, then folders; each group sorts by name with numeric collation so `01-`, `02-` …
  * prefixes control ordering. Files lead so a folder's own pages sit beside its landing page instead of below expanded sub-trees.
+ * Web-safe images met on the way are recorded in `images` (path → stamp) so a watch rebuild can tell which ones changed.
  *
  * @param {string} dir - Absolute directory.
  * @param {string} root - Absolute docs root.
- * @param {(file: string, rel: string) => Page} makePage - Page factory.
+ * @param {Map<string, string>} images - Collected image stamps.
  * @returns {DirNode|null} Directory node, or null when it holds no markdown.
  */
-function walk(dir, root, makePage) {
+function walk(dir, root, images) {
   const entries = readdirSync(dir, { withFileTypes: true })
     .filter((e) => !e.name.startsWith(".") && !IGNORED_DIRS.has(e.name))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
@@ -321,15 +238,25 @@ function walk(dir, root, makePage) {
   const folders = [];
   for (const e of entries) {
     const abs = join(dir, e.name);
-    const isDir = e.isDirectory() || (e.isSymbolicLink() && statSync(abs).isDirectory());
-    if (isDir) {
-      const child = walk(abs, root, makePage);
+    const st = e.isSymbolicLink() || !e.isDirectory() ? statOrNull(abs) : null;
+    if (e.isDirectory() || st?.isDirectory()) {
+      const child = walk(abs, root, images);
       if (child) folders.push(child);
-    } else if (/\.md$/i.test(e.name)) {
-      const page = makePage(abs, relative(root, abs).split(sep).join("/"));
+    } else if (!st) continue;
+    else if (/\.md$/i.test(e.name)) {
+      const rel = relative(root, abs).split(sep).join("/");
+      /** @type {Page} */
+      const page = {
+        file: abs,
+        rel,
+        route: routeFromRel(rel),
+        title: prettify(e.name),
+        updated: isoDate(st.mtime),
+        stamp: `${st.mtimeMs}:${st.size}`,
+      };
       if (LANDING_RE.test(e.name) && !node.landing) node.landing = page;
       else files.push({ type: /** @type {const} */ ("page"), page });
-    }
+    } else if (IMAGE_MIME[extname(e.name).toLowerCase()]) images.set(abs, `${st.mtimeMs}:${st.size}`);
   }
   node.children = [...files, ...folders];
   return node.landing || node.children.length ? node : null;
@@ -348,176 +275,130 @@ function flatten(node) {
 }
 
 // ---------------------------------------------------------------------------
-// Markdown → HTML
+// Renderers — inline, or a pool of worker threads
 // ---------------------------------------------------------------------------
 
 /**
- * Converts GitHub-style blockquote alerts (> [!NOTE], > [!TIP], etc.) into semantic callout divs.
- *
- * @param {string} html - Raw HTML from marked.
- * @returns {string} HTML with callout divs substituted.
+ * @typedef {object} Renderer
+ * @property {(routes: Array<[string, string]>) => void} setRoutes Shares the file → route map with every render thread.
+ * @property {(page: { file: string, route: string }) => Promise<PageResult>} render Renders one page.
+ * @property {() => Promise<void>} close Stops any threads.
  */
-function applyCallouts(html) {
-  // marked renders > [!NOTE]\n> text as <blockquote><p>[!NOTE]\ntext</p></blockquote>
-  return html.replace(
-    /<blockquote>\s*<p>\[!(NOTE|TIP|WARNING|IMPORTANT|CAUTION)\]\n?([\s\S]*?)<\/blockquote>/gi,
-    (_, type, inner) => {
-      const label = type.charAt(0) + type.slice(1).toLowerCase();
-      const body = inner.replace(/<\/p>\s*$/, "").trim();
-      return `<div class="callout callout-${type.toLowerCase()}"><strong class="callout-label">${label}</strong><p>${body}</p></div>`;
-    },
-  );
+
+/**
+ * Picks a worker count for a tree: none for small trees, else one per spare core (capped). A single worker would only add
+ * start-up and messaging cost to the same serial work, so fewer than two means render inline.
+ *
+ * @param {number} pages - Page count.
+ * @returns {number} Worker count, 0 for inline.
+ */
+function defaultWorkers(pages) {
+  if (pages < WORKER_THRESHOLD) return 0;
+  const n = Math.min(availableParallelism() - 1, 8, Math.ceil(pages / 20));
+  return n >= 2 ? n : 0;
 }
 
 /**
- * Creates a marked instance bound to a mutable per-page render context. Links to other .md files become hash routes, images become
- * data: URIs, headings get GitHub-style anchors, and code is highlighted at build time.
+ * Renders pages on the main thread. The render module (and with it marked and highlight.js) loads only when needed, so a
+ * worker-backed build never pays for it on the main thread.
  *
- * @param {{ routeFor: (abs: string) => string|undefined, warn: (msg: string) => void }} site - Site-wide lookups.
- * @returns {{ marked: Marked, ctx: { file: string, route: string, slugs: Map<string, number>, mermaid: boolean } }} Instance.
+ * @returns {Promise<Renderer>} Renderer.
  */
-function createRenderer(site) {
-  const ctx = { file: "", route: "", slugs: new Map(), mermaid: false };
-  /** @type {Map<string, string>} */
-  const imageCache = new Map();
+async function createInlineRenderer() {
+  const { createPageRenderer } = await import("./docs0.render.js");
+  const r = createPageRenderer();
+  return {
+    setRoutes: (routes) => r.setRoutes(routes),
+    render: async (page) => r.render(page),
+    close: async () => {},
+  };
+}
+
+/**
+ * Renders pages on a pool of worker threads. Each worker handles one page at a time and pulls the next queued page as soon as it
+ * is free, so a few slow pages do not hold up the rest. A worker that crashes fails its page and is replaced.
+ *
+ * @param {number} size - Worker count.
+ * @returns {Renderer} Renderer.
+ */
+function createWorkerPool(size) {
+  const url = new URL("./docs0.worker.js", import.meta.url);
+  /** @type {Array<{ page: object, resolve: (r: PageResult) => void, reject: (e: Error) => void }>} */
+  const queue = [];
+  /** @type {Set<Worker>} */
+  const all = new Set();
+  /** @type {Worker[]} */
+  const idle = [];
+  /** @type {Map<Worker, (typeof queue)[number]>} */
+  const busy = new Map();
+  /** @type {Array<[string, string]>} */
+  let routes = [];
+  let closing = false;
+
+  /** Hands queued pages to idle workers. */
+  function pump() {
+    while (idle.length && queue.length) {
+      const w = idle.pop();
+      const job = queue.shift();
+      busy.set(w, job);
+      w.postMessage({ type: "render", page: job.page });
+    }
+  }
 
   /**
-   * Rewrites a link target. In-page anchors and relative .md links become hash routes; everything else is left alone.
+   * Settles the page a worker was rendering, if any.
    *
-   * @param {string} href - Original href.
-   * @returns {string} Rewritten href.
+   * @param {Worker} w - Worker.
+   * @param {(job: (typeof queue)[number]) => void} fn - Settles the job.
    */
-  function rewriteHref(href) {
-    if (!href) return href;
-    if (href.startsWith("#")) return routeHref(ctx.route, decodeURIComponent(href.slice(1)));
-    if (/^([a-z][a-z0-9+.-]*:|\/\/)/i.test(href) || href.startsWith("/")) return href;
-    const [path, anchor] = href.split("#");
-    const abs = resolve(dirname(ctx.file), decodeURI(path));
-    const route = site.routeFor(abs);
-    if (route === undefined) {
-      if (/\.md$/i.test(path)) {
-        const why = existsSync(abs) ? "is outside the docs tree" : "is broken (file not found)";
-        site.warn(`${relative(process.cwd(), ctx.file)}: link to ${href} ${why}`);
+  function settle(w, fn) {
+    const job = busy.get(w);
+    busy.delete(w);
+    if (job) fn(job);
+  }
+
+  /** Starts a worker and primes it with the current routes. */
+  function spawn() {
+    const w = new Worker(url);
+    all.add(w);
+    w.postMessage({ type: "routes", routes });
+    w.on("message", (msg) => {
+      settle(w, (job) => (msg.error ? job.reject(new Error(msg.error)) : job.resolve(msg.result)));
+      idle.push(w);
+      pump();
+    });
+    w.on("error", (err) => settle(w, (job) => job.reject(err)));
+    w.on("exit", () => {
+      settle(w, (job) => job.reject(new Error("render worker exited")));
+      all.delete(w);
+      idle.splice(idle.indexOf(w) >>> 0, 1);
+      if (!closing) {
+        spawn();
+        pump();
       }
-      return href;
-    }
-    return routeHref(route, anchor && decodeURIComponent(anchor));
+    });
+    idle.push(w);
   }
 
-  /**
-   * Inlines a local, web-safe image as a base64 data: URI. Remote and unknown sources pass through.
-   *
-   * @param {string} src - Original src.
-   * @returns {string} data: URI or original src.
-   */
-  function inlineImage(src) {
-    if (!src || /^([a-z][a-z0-9+.-]*:|\/\/)/i.test(src)) return src;
-    const abs = resolve(dirname(ctx.file), decodeURI(src.split(/[?#]/)[0]));
-    if (imageCache.has(abs)) return imageCache.get(abs);
-    const mime = IMAGE_MIME[extname(abs).toLowerCase()];
-    if (!mime || !existsSync(abs)) {
-      site.warn(`${relative(process.cwd(), ctx.file)}: image ${src} ${mime ? "not found" : "is not a web-safe type"}`);
-      return src;
-    }
-    const uri = `data:${mime};base64,${readFileSync(abs).toString("base64")}`;
-    imageCache.set(abs, uri);
-    return uri;
-  }
+  for (let i = 0; i < size; i++) spawn();
 
-  const marked = new Marked({
-    gfm: true,
-    breaks: false,
-    renderer: {
-      /**
-       * Renders a heading with a GitHub-style slug in data-anchor (ids would collide across pages in one document).
-       *
-       * @param {{ tokens: any[], depth: number }} token
-       * @returns {string} HTML string.
-       */
-      heading({ tokens, depth }) {
-        const inner = this.parser.parseInline(tokens);
-        let slug = githubSlug(plainText(inner));
-        const n = ctx.slugs.get(slug) ?? 0;
-        ctx.slugs.set(slug, n + 1);
-        if (n) slug = `${slug}-${n}`;
-        const href = routeHref(ctx.route, slug);
-        return `<h${depth} data-anchor="${esc(slug)}">${inner}<a class="anchor" href="${esc(href)}" aria-label="Link to this section">#</a></h${depth}>\n`;
-      },
-
-      /**
-       * Renders a link, routing relative .md targets through the SPA and opening external links in a new tab.
-       *
-       * @param {{ href: string, title: string|null, tokens: any[] }} token
-       * @returns {string} HTML string.
-       */
-      link({ href, title, tokens }) {
-        const text = this.parser.parseInline(tokens);
-        const target = rewriteHref(href);
-        const external = /^https?:\/\//i.test(target);
-        return `<a href="${esc(target)}"${title ? ` title="${esc(title)}"` : ""}${
-          external ? ' target="_blank" rel="noopener"' : ""
-        }>${text}</a>`;
-      },
-
-      /**
-       * Renders an image with local sources inlined.
-       *
-       * @param {{ href: string, title: string|null, text: string }} token
-       * @returns {string} HTML string.
-       */
-      image({ href, title, text }) {
-        return `<img src="${esc(inlineImage(href))}" alt="${esc(text)}"${title ? ` title="${esc(title)}"` : ""}>`;
-      },
-
-      /**
-       * Passes raw HTML through, inlining any local <img src> it contains.
-       *
-       * @param {{ text: string }} token
-       * @returns {string} HTML string.
-       */
-      html({ text }) {
-        return text.replace(/(<img\b[^>]*?\bsrc=)(["'])(.*?)\2/gi, (_, pre, q, src) => `${pre}${q}${inlineImage(src)}${q}`);
-      },
-
-      /**
-       * Renders a fenced code block with highlight.js token colouring. Mermaid blocks are escaped and left for the client.
-       *
-       * @param {{ text: string, lang: string }} token
-       * @returns {string} HTML string.
-       */
-      code({ text, lang }) {
-        const language = (lang ?? "").split(/\s+/)[0].toLowerCase();
-        if (language === "mermaid") {
-          ctx.mermaid = true;
-          return `<pre class="mermaid">${esc(text)}</pre>\n`;
-        }
-        const known = language && hljs.getLanguage(language);
-        const body = known ? hljs.highlight(text, { language }).value : esc(text);
-        const label = language ? `<span class="code-lang">${esc(language)}</span>` : "";
-        return `<div class="code">${label}<button class="code-copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs${
-          known ? ` language-${language}` : ""
-        }">${body}</code></pre></div>\n`;
-      },
+  return {
+    setRoutes(next) {
+      // Messages to a worker are handled in order, so any page queued after this sees the new routes
+      routes = next;
+      for (const w of all) w.postMessage({ type: "routes", routes });
     },
-  });
-
-  return { marked, ctx };
-}
-
-/**
- * Removes the `## Table of Contents` heading and its following list from a token list.
- *
- * @param {any[]} tokens - marked tokens (mutated).
- * @returns {any[]|null} The TOC list token wrapped as a token list, or null when the page has no TOC.
- */
-export function extractToc(tokens) {
-  const i = tokens.findIndex((t) => t.type === "heading" && t.depth === 2 && TOC_RE.test(t.text));
-  if (i < 0) return null;
-  let j = i + 1;
-  while (tokens[j]?.type === "space") j++;
-  if (tokens[j]?.type !== "list") return null;
-  const [list] = tokens.splice(i, j - i + 1).slice(-1);
-  return Object.assign([list], { links: tokens.links });
+    render(page) {
+      return new Promise((resolve, reject) => {
+        queue.push({ page, resolve, reject });
+        pump();
+      });
+    },
+    async close() {
+      closing = true;
+      await Promise.all([...all].map((w) => w.terminate()));
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -554,80 +435,155 @@ function renderNav(node, depth = 0) {
 }
 
 /**
- * Compiles a docs tree into a single self-contained HTML document.
+ * Wraps a rendered page in its <article>, with the pager to its neighbours.
  *
- * @param {string} rootArg - Path to the docs root.
- * @param {{ warn?: (msg: string) => void }} [options] - Options.
- * @returns {{ html: string, pages: Page[], siteName: string, version: string|null, warnings: string[] }} Build result.
+ * @param {Page} p - Page.
+ * @param {PageResult} r - Render result.
+ * @param {Page|undefined} prev - Previous page.
+ * @param {Page|undefined} next - Next page.
+ * @param {string} rootName - Docs root folder name, for the displayed path.
+ * @returns {string} HTML string.
  */
-export function build(rootArg, options = {}) {
-  const root = resolve(rootArg);
-  if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error(`docs root not found: ${rootArg}`);
-  const warnings = [];
-  const warn = (/** @type {string} */ msg) => {
-    if (warnings.includes(msg)) return;
-    warnings.push(msg);
-    options.warn?.(msg);
-  };
-
-  // Pass 1 — discover pages, lex them, derive titles and routes (needed before rendering for cross-page links)
-  const lexer = new Marked({ gfm: true });
-  const dates = gitDates(root);
-  const tree = walk(root, root, (file, rel) => {
-    const tokens = lexer.lexer(readFileSync(file, "utf8"));
-    const h1 = tokens.find((t) => t.type === "heading" && t.depth === 1);
-    const title = (h1 && plainText(lexer.parseInline(h1.text))) || prettify(basename(file));
-    const updated = dates.get(file) ?? isoDate(statSync(file).mtime);
-    return { file, rel, route: routeFromRel(rel), title, tokens, updated };
-  });
-  if (!tree) throw new Error(`no .md files found below ${rootArg}`);
-  const pages = flatten(tree);
-
-  /** @type {Map<string, string>} */
-  const routeByFile = new Map(pages.map((p) => [p.file, p.route]));
-  const routeFor = (/** @type {string} */ abs) =>
-    routeByFile.get(abs) ?? routeByFile.get(join(abs, "README.md")) ?? routeByFile.get(join(abs, "index.md"));
-
-  // Pass 2 — render each page
-  const { marked, ctx } = createRenderer({ routeFor, warn });
-  let anyMermaid = false;
-  const rootName = basename(root);
-  const articles = pages.map((p, i) => {
-    Object.assign(ctx, { file: p.file, route: p.route, slugs: new Map(), mermaid: false });
-    const tocTokens = extractToc(p.tokens);
-    const body = applyCallouts(marked.parser(p.tokens));
-    const toc = tocTokens ? marked.parser(tocTokens) : "";
-    anyMermaid ||= ctx.mermaid;
-    const prev = pages[i - 1];
-    const next = pages[i + 1];
-    const pager = [
-      prev
-        ? `<a class="pager-prev" href="${esc(routeHref(prev.route))}"><small>Previous</small>${esc(prev.title)}</a>`
-        : "<span></span>",
-      next
-        ? `<a class="pager-next" href="${esc(routeHref(next.route))}"><small>Next</small>${esc(next.title)}</a>`
-        : "<span></span>",
-    ].join("");
-    return `<article class="page${toc ? " has-toc" : ""}" data-route="${esc(p.route)}" data-path="${esc(`${rootName}/${p.rel}`)}" data-title="${esc(p.title)}" data-updated="${esc(p.updated)}" hidden>
+function renderArticle(p, r, prev, next, rootName) {
+  const pager = [
+    prev
+      ? `<a class="pager-prev" href="${esc(routeHref(prev.route))}"><small>Previous</small>${esc(prev.title)}</a>`
+      : "<span></span>",
+    next ? `<a class="pager-next" href="${esc(routeHref(next.route))}"><small>Next</small>${esc(next.title)}</a>` : "<span></span>",
+  ].join("");
+  return `<article class="page${r.toc ? " has-toc" : ""}" data-route="${esc(p.route)}" data-path="${esc(`${rootName}/${p.rel}`)}" data-title="${esc(p.title)}" data-updated="${esc(p.updated)}" hidden>
   <div class="page-main">
     <div class="markdown">
-${body}
+${r.body}
     </div>
     <nav class="pager" aria-label="Pages">${pager}</nav>
-  </div>${toc ? `\n  <aside class="page-toc" aria-label="On this page"><div class="toc-title">On this page</div>${toc}</aside>` : ""}
+  </div>${r.toc ? `\n  <aside class="page-toc" aria-label="On this page"><div class="toc-title">On this page</div>${r.toc}</aside>` : ""}
 </article>`;
-  });
+}
 
-  const pkg = findPackage(root);
-  const siteName = pkg.name ?? prettify(rootName);
-  const html = buildHtml({
-    siteName,
-    version: pkg.version,
-    nav: renderNav(tree),
-    articles: articles.join("\n"),
-    mermaid: anyMermaid,
-  });
-  return { html, pages, siteName, version: pkg.version, warnings };
+/**
+ * @typedef {object} BuildResult
+ * @property {string} html            Complete HTML document.
+ * @property {Page[]} pages           Pages in nav order.
+ * @property {string} siteName        Package name or prettified root folder name.
+ * @property {string|null} version    Version from the closest package.json.
+ * @property {string[]} warnings      All current warnings (broken links, missing images), de-duplicated.
+ * @property {number} rendered        Pages rendered by this build; the rest came from the cache.
+ * @property {number} removed         Pages gone since the previous build.
+ * @property {boolean} changed        False when nothing relevant changed since the previous build.
+ */
+
+/**
+ * Creates a reusable builder for a docs tree. Each build() rescans the tree, re-renders only pages whose file changed or whose
+ * inlined images or link targets changed, then reassembles the document from cached results. Nav, pager and folder labels are
+ * rebuilt every time because they are cheap and depend on titles across pages.
+ *
+ * @param {string} rootArg - Path to the docs root.
+ * @param {{ workers?: number, warn?: (msg: string) => void }} [options] - Worker count (default: from page count) and a callback
+ *   for warnings from freshly rendered pages.
+ * @returns {{ build: () => Promise<BuildResult>, close: () => Promise<void> }} Builder.
+ */
+export function createBuilder(rootArg, options = {}) {
+  const root = resolve(rootArg);
+  const rootName = basename(root);
+  /** @type {Map<string, { stamp: string, result: PageResult }>} */
+  const cache = new Map();
+  /** @type {Renderer|null} */
+  let renderer = null;
+  /** @type {{ files: Set<string>, images: Map<string, string> }|null} */
+  let last = null;
+
+  /**
+   * Builds the document, reusing unaffected pages from the previous build.
+   *
+   * @returns {Promise<BuildResult>} Result.
+   */
+  async function build() {
+    if (!statOrNull(root)?.isDirectory()) throw new Error(`docs root not found: ${rootArg}`);
+    /** @type {Map<string, string>} */
+    const images = new Map();
+    const tree = walk(root, root, images);
+    if (!tree) throw new Error(`no .md files found below ${rootArg}`);
+    const pages = flatten(tree);
+    const files = new Set(pages.map((p) => p.file));
+
+    // Paths whose appearance, disappearance or change affects pages that link to or inline them
+    const stale = new Set();
+    let structural = !last;
+    let removed = 0;
+    if (last) {
+      for (const f of files) if (!last.files.has(f)) stale.add(f);
+      for (const f of last.files) {
+        if (files.has(f)) continue;
+        stale.add(f);
+        removed++;
+      }
+      structural = stale.size > 0;
+      // A folder link resolves to its README/index, so it is affected when that landing page comes or goes
+      const landingDirs = [...stale].filter((f) => LANDING_RE.test(basename(f))).map((f) => dirname(f));
+      for (const d of landingDirs) stale.add(d);
+      for (const [img, stamp] of images) if (last.images.get(img) !== stamp) stale.add(img);
+      for (const img of last.images.keys()) if (!images.has(img)) stale.add(img);
+    }
+    for (const [f, c] of cache) {
+      if (!files.has(f) || c.result.links.some((l) => stale.has(l)) || c.result.images.some((i) => stale.has(i))) cache.delete(f);
+    }
+
+    if (!renderer) {
+      const n = options.workers ?? defaultWorkers(pages.length);
+      renderer = n > 0 ? createWorkerPool(n) : await createInlineRenderer();
+    }
+    if (structural) renderer.setRoutes(pages.map((p) => [p.file, p.route]));
+
+    const todo = pages.filter((p) => cache.get(p.file)?.stamp !== p.stamp);
+    const settled = await Promise.allSettled(
+      todo.map((p) =>
+        renderer.render({ file: p.file, route: p.route }).then((result) => {
+          cache.set(p.file, { stamp: p.stamp, result });
+          for (const w of result.warnings) options.warn?.(w);
+        }),
+      ),
+    );
+    const failed = settled.find((s) => s.status === "rejected");
+    if (failed) throw /** @type {PromiseRejectedResult} */ (failed).reason;
+    const changed = !last || structural || stale.size > 0 || todo.length > 0;
+    last = { files, images };
+
+    const results = pages.map((p) => cache.get(p.file).result);
+    pages.forEach((p, i) => (p.title = results[i].title));
+    const pkg = findPackage(root);
+    const siteName = pkg.name ?? prettify(rootName);
+    const html = buildHtml({
+      siteName,
+      version: pkg.version,
+      nav: renderNav(tree),
+      articles: pages.map((p, i) => renderArticle(p, results[i], pages[i - 1], pages[i + 1], rootName)).join("\n"),
+      mermaid: results.some((r) => r.mermaid),
+    });
+    const warnings = [...new Set(results.flatMap((r) => r.warnings))];
+    return { html, pages, siteName, version: pkg.version, warnings, rendered: todo.length, removed, changed };
+  }
+
+  return {
+    build,
+    close: async () => renderer?.close(),
+  };
+}
+
+/**
+ * Compiles a docs tree into a single self-contained HTML document (one-off build).
+ *
+ * @param {string} rootArg - Path to the docs root.
+ * @param {{ workers?: number, warn?: (msg: string) => void }} [options] - Options, as for createBuilder.
+ * @returns {Promise<BuildResult>} Build result.
+ */
+export async function build(rootArg, options = {}) {
+  const builder = createBuilder(rootArg, options);
+  try {
+    return await builder.build();
+  } finally {
+    await builder.close();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -648,6 +604,30 @@ function hljsStyle(name) {
 /** Inline SVG logo: a page outline with DOCS0's slashed zero. */
 const LOGO = `<svg class="logo" viewBox="0 0 100 100" aria-hidden="true"><path d="M24 14h38l16 16v56H24z" fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="round"/><ellipse cx="51" cy="55" rx="11" ry="16" fill="none" stroke="currentColor" stroke-width="6"/><line x1="37" y1="74" x2="65" y2="36" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>`;
 
+/** @type {{ css: string, clientJs: string, hlCss: string, mermaidFallback: string }|undefined} */
+let assets;
+
+/**
+ * Loads the stylesheets and scripts embedded in every build, once per process (watch rebuilds reuse them).
+ *
+ * @returns {{ css: string, clientJs: string, hlCss: string, mermaidFallback: string }} Assets.
+ */
+function staticAssets() {
+  if (assets) return assets;
+  const vendor = resolve(__dirname, "../vendor/mermaid.min.js");
+  assets = {
+    css: readFileSync(resolve(__dirname, "docs0.css"), "utf8"),
+    clientJs: readFileSync(resolve(__dirname, "docs0.client.js"), "utf8"),
+    // Theme-scoped highlight.js styles via native CSS nesting: :root[data-theme] raises specificity so the right one wins
+    hlCss: `:root[data-theme="light"] {\n${hljsStyle("github.min.css")}\n}\n:root[data-theme="dark"] {\n${hljsStyle("github-dark.min.css")}\n}`,
+    // Embedded offline fallback, used only when some page has diagrams. Neutralise any "</script" so the block cannot end early.
+    mermaidFallback: existsSync(vendor)
+      ? `\n  <script type="text/plain" id="docs0-mermaid">${readFileSync(vendor, "utf8").replace(/<\/script/gi, "<\\/script")}</script>`
+      : "",
+  };
+  return assets;
+}
+
 /**
  * Builds the full HTML document string.
  *
@@ -655,16 +635,7 @@ const LOGO = `<svg class="logo" viewBox="0 0 100 100" aria-hidden="true"><path d
  * @returns {string} Complete HTML document.
  */
 function buildHtml({ siteName, version, nav, articles, mermaid }) {
-  const css = readFileSync(resolve(__dirname, "docs0.css"), "utf8");
-  const clientJs = readFileSync(resolve(__dirname, "docs0.client.js"), "utf8");
-  // Theme-scoped highlight.js styles via native CSS nesting: :root[data-theme] raises specificity so the right one wins
-  const hlCss = `:root[data-theme="light"] {\n${hljsStyle("github.min.css")}\n}\n:root[data-theme="dark"] {\n${hljsStyle("github-dark.min.css")}\n}`;
-  const vendor = resolve(__dirname, "../vendor/mermaid.min.js");
-  // Embedded offline fallback, only when some page uses mermaid. Neutralise any "</script" so the block cannot end early.
-  const mermaidFallback =
-    mermaid && existsSync(vendor)
-      ? `\n  <script type="text/plain" id="docs0-mermaid">${readFileSync(vendor, "utf8").replace(/<\/script/gi, "<\\/script")}</script>`
-      : "";
+  const { css, clientJs, hlCss, mermaidFallback } = staticAssets();
   const config = JSON.stringify({ siteName, mermaidCdn: MERMAID_CDN }).replace(/</g, "\\u003c");
 
   return `<!DOCTYPE html>
@@ -714,12 +685,11 @@ ${nav}
   <main id="content">
 ${articles}
   </main>
-  <script type="application/json" id="docs0-config">${config}</script>${mermaidFallback}
+  <script type="application/json" id="docs0-config">${config}</script>${mermaid ? mermaidFallback : ""}
   <script>${clientJs}</script>
 </body>
 </html>`;
 }
-
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -741,38 +711,131 @@ function openInBrowser(file) {
   } else execFile("xdg-open", [file], quiet);
 }
 
+/**
+ * Writes the output atomically (temp file + rename), so a browser refresh mid-write never loads a truncated page.
+ *
+ * @param {string} out - Absolute output path.
+ * @param {string} html - Document.
+ */
+function writeOut(out, html) {
+  mkdirSync(dirname(out), { recursive: true });
+  const tmp = `${out}.${process.pid}.tmp`;
+  writeFileSync(tmp, html);
+  renameSync(tmp, out);
+}
+
+/**
+ * Summarises hidden warnings for a status line.
+ *
+ * @param {number} n - Warning count.
+ * @param {boolean} verbose - Whether warnings were already listed.
+ * @returns {string} Suffix, empty when there is nothing to add.
+ */
+function warningHint(n, verbose) {
+  return n && !verbose ? ` · ${n} warning${n === 1 ? "" : "s"} (-v to list)` : "";
+}
+
+/**
+ * Watches the docs tree and rebuilds after changes. File-system events are only a trigger: editors save through temp files and
+ * renames, so event types are unreliable, and the builder's rescan works out what actually changed. Builds never overlap; events
+ * during a build queue exactly one more.
+ *
+ * @param {ReturnType<typeof createBuilder>} builder - Builder that produced the initial output.
+ * @param {string} root - Absolute docs root.
+ * @param {string} out - Absolute output path.
+ * @param {boolean} verbose - List warnings from re-rendered pages.
+ */
+function watchDocs(builder, root, out, verbose) {
+  /** @type {NodeJS.Timeout|undefined} */
+  let timer;
+  let running = false;
+  let again = false;
+
+  /** Rebuilds until no further changes arrived meanwhile. */
+  async function rebuild() {
+    if (running) {
+      again = true;
+      return;
+    }
+    running = true;
+    do {
+      again = false;
+      const started = performance.now();
+      try {
+        const r = await builder.build();
+        if (!r.changed) continue;
+        writeOut(out, r.html);
+        const time = new Date().toTimeString().slice(0, 8);
+        const ms = (performance.now() - started).toFixed(0);
+        const what = `${r.rendered} page${r.rendered === 1 ? "" : "s"} re-rendered${r.removed ? `, ${r.removed} removed` : ""}`;
+        console.log(`↻  ${time}  ${what} · ${ms} ms${warningHint(r.warnings.length, verbose)}`);
+      } catch (err) {
+        // Keep watching and keep the last good output; the next save gets another try
+        console.error(`docs0: ${/** @type {Error} */ (err).message}`);
+      }
+    } while (again);
+    running = false;
+  }
+
+  const watcher = watch(root, { recursive: true }, (_event, name) => {
+    if (
+      name &&
+      String(name)
+        .split(/[\\/]/)
+        .some((s) => s.startsWith(".") || IGNORED_DIRS.has(s))
+    )
+      return;
+    clearTimeout(timer);
+    timer = setTimeout(rebuild, DEBOUNCE_MS);
+  });
+
+  const stop = async () => {
+    clearTimeout(timer);
+    watcher.close();
+    await builder.close();
+    process.exit(0);
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  console.log(`   Watching ${root} · Ctrl-C to stop\n`);
+}
+
 /** Entry point when run as a command. */
-function main() {
+async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help || !opts.root) {
-    console.error("Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-v|--verbose]");
+    console.error("Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N]");
     process.exit(opts.help ? 0 : 1);
   }
 
   const started = performance.now();
+  // Warnings (broken links, missing images) are listed only with --verbose; otherwise just counted in the summary
+  const builder = createBuilder(opts.root, {
+    workers: opts.workers,
+    warn: opts.verbose ? (msg) => console.warn(`docs0: warning: ${msg}`) : undefined,
+  });
   let result;
   try {
-    // Warnings (broken links, missing images) are listed only with --verbose; otherwise just counted in the summary
-    result = build(opts.root, { warn: opts.verbose ? (msg) => console.warn(`docs0: warning: ${msg}`) : undefined });
+    result = await builder.build();
   } catch (err) {
     console.error(`docs0: ${/** @type {Error} */ (err).message}`);
+    await builder.close();
     process.exit(1);
   }
 
   const out = opts.out ? resolve(opts.out) : defaultOut(opts.root, result.siteName);
-  mkdirSync(dirname(out), { recursive: true });
-  writeFileSync(out, result.html);
+  writeOut(out, result.html);
   // Inside GitHub Actions, expose the location to later steps (e.g. upload-pages-artifact with: path: steps.<id>.outputs.dir)
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `file=${out}\ndir=${dirname(out)}\n`);
 
   const kb = (Buffer.byteLength(result.html) / 1024).toFixed(0);
-  const n = result.warnings.length;
-  const hint = n && !opts.verbose ? ` · ${n} warning${n === 1 ? "" : "s"} (-v to list)` : "";
   console.log(`\n📚  DOCS0 → ${out}`);
   console.log(
-    `   ${result.pages.length} pages from ${resolve(opts.root)} · ${kb} KB · ${(performance.now() - started).toFixed(0)} ms${hint}\n`,
+    `   ${result.pages.length} pages from ${resolve(opts.root)} · ${kb} KB · ${(performance.now() - started).toFixed(0)} ms${warningHint(result.warnings.length, opts.verbose)}\n`,
   );
   if (opts.open) openInBrowser(out);
+  if (opts.watch) watchDocs(builder, resolve(opts.root), out, opts.verbose);
+  else await builder.close();
 }
 
 // Run only when invoked directly (bin symlinks resolved), not when imported by tests

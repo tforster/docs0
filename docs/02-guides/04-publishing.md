@@ -39,6 +39,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Restore file dates
+        run: git ls-files -z docs | while IFS= read -r -d '' f; do touch -d "$(git log -1 --format=%cI -- "$f")" "$f"; done
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -65,8 +67,8 @@ sequenceDiagram
 ```
 
 > [!TIP]
-> `fetch-depth: 0` fetches full history so each page's **last updated** date comes from its latest commit. With the default
-> shallow clone every page would show the date of the most recent commit.
+> DOCS0 dates each page by its file's modified time, and a fresh checkout sets every file to the checkout time. The
+> `Restore file dates` step (with `fetch-depth: 0` for full history) sets each doc's modified time to its last commit first.
 
 ## Enable Pages
 

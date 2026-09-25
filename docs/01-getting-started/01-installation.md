@@ -44,7 +44,7 @@ npm install --save-dev @tforster/docs0
 
 ```console
 $ docs0 --help
-Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-v|--verbose]
+Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N]
 ```
 
 > [!NOTE]

@@ -9,7 +9,7 @@ Welcome! This section takes you from zero to a published documentation site in a
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org) **18 or newer**
+- [Node.js](https://nodejs.org) **20 or newer**
 - A folder containing at least one `.md` file
 
 ## The path

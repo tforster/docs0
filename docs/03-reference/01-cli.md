@@ -9,11 +9,12 @@
   - [Environment](#environment)
   - [Exit codes](#exit-codes)
   - [Output](#output)
+  - [Watch mode](#watch-mode)
 
 ## Synopsis
 
 ```bash
-docs0 <docs-root> [--out=file.html] [--open=false] [-v|--verbose]
+docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N]
 ```
 
 ## Arguments
@@ -26,13 +27,15 @@ docs0 <docs-root> [--out=file.html] [--open=false] [-v|--verbose]
 
 Flags may be written with or without the leading `--`.
 
-| Flag                          | Default     | Description                                                                                 |
-| :---------------------------- | :---------- | :------------------------------------------------------------------------------------------ |
-| `--out=<file>` / `out=<file>` | temp folder | Output path, relative to the current directory. Folders are created. See [Output](#output). |
-| `--open=false` / `open=false` | `true`      | Skip opening the result in the default browser.                                             |
-| `--no-open`                   |             | Same as `--open=false`.                                                                     |
-| `-v`, `--verbose`             | `false`     | List each warning (broken link, missing image). Otherwise only a count is shown.            |
-| `-h`, `--help`                |             | Print usage and exit.                                                                       |
+| Flag                            | Default     | Description                                                                                   |
+| :------------------------------ | :---------- | :-------------------------------------------------------------------------------------------- |
+| `--out=<file>` / `out=<file>`   | temp folder | Output path, relative to the current directory. Folders are created. See [Output](#output).   |
+| `--open=false` / `open=false`   | `true`      | Skip opening the result in the default browser.                                               |
+| `--no-open`                     |             | Same as `--open=false`.                                                                       |
+| `-w`, `--watch`                 | `false`     | Keep running and rebuild after changes. See [Watch mode](#watch-mode).                        |
+| `-v`, `--verbose`               | `false`     | List each warning (broken link, missing image). Otherwise only a count is shown.              |
+| `--workers=<n>` / `workers=<n>` | auto        | Render threads. Auto uses none below 40 pages, else one per spare core (max 8). `0` = inline. |
+| `-h`, `--help`                  |             | Print usage and exit.                                                                         |
 
 ## Environment
 
@@ -65,3 +68,30 @@ overwrites the same file, and different projects never collide. The temp folder 
 `%TEMP%` on Windows (also `/tmp` on GitHub-hosted Linux runners).
 
 Warnings (broken image paths, broken links, links that leave the docs tree) are printed to stderr but do not fail the build.
+
+## Watch mode
+
+```console
+$ docs0 docs --watch
+
+📚  DOCS0 → /tmp/docs0/my-project-3f9a1c2e/index.html
+   13 pages from /home/me/project/docs · 3190 KB · 160 ms
+
+   Watching /home/me/project/docs · Ctrl-C to stop
+
+↻  14:02:11  1 page re-rendered · 24 ms
+```
+
+After the first build DOCS0 keeps watching the docs root. Each save rewrites the same output file, so refresh the open tab to see
+the change. Only the pages a change affects are re-rendered:
+
+| Change                      | Re-rendered                                      |
+| :-------------------------- | :----------------------------------------------- |
+| A page is edited            | That page                                        |
+| An image is edited          | Pages that inline it                             |
+| A page is added or removed  | The new page, plus pages whose links point at it |
+| Anything else (e.g. `.txt`) | Nothing; no rebuild is reported                  |
+
+The nav, pager and folder labels are rebuilt every time, so a changed title shows up everywhere. A burst of saves (editors often
+write several times) is debounced into one rebuild. If a build fails the error is printed, the last good file is kept, and
+watching continues.

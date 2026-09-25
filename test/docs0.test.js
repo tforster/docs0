@@ -1,11 +1,21 @@
-// docs0.test.js — unit and integration tests for the DOCS0 compiler (node:test, Node 18+)
+// docs0.test.js — unit and integration tests for the DOCS0 compiler (node:test, Node 20+)
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  utimesSync,
+  unlinkSync,
+  chmodSync,
+} from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -16,12 +26,12 @@ import {
   parseArgs,
   prettify,
   folderLabel,
-  gitDates,
   defaultOut,
   findPackage,
-  extractToc,
+  createBuilder,
   esc,
 } from "../dist/docs0.js";
+import { extractToc } from "../dist/docs0.render.js";
 
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/docs0.js");
 // 1×1 transparent PNG
@@ -127,7 +137,15 @@ describe("esc", () => {
 
 describe("parseArgs", () => {
   it("reads the root and defaults", () => {
-    assert.deepEqual(parseArgs(["docs"], {}), { root: "docs", out: undefined, open: true, verbose: false, help: false });
+    assert.deepEqual(parseArgs(["docs"], {}), {
+      root: "docs",
+      out: undefined,
+      open: true,
+      watch: false,
+      verbose: false,
+      workers: undefined,
+      help: false,
+    });
   });
   it("accepts open=false with or without dashes, and --no-open", () => {
     for (const flag of ["open=false", "--open=false", "--no-open", "open=0", "--open=no"]) {
@@ -148,6 +166,13 @@ describe("parseArgs", () => {
     assert.equal(parseArgs(["--verbose", "docs"], {}).verbose, true);
     assert.equal(parseArgs(["--verbose", "docs"], {}).root, "docs");
     assert.equal(parseArgs([], {}).root, undefined);
+  });
+  it("reads watch and workers", () => {
+    assert.equal(parseArgs(["docs", "-w"], {}).watch, true);
+    assert.equal(parseArgs(["--watch", "docs"], {}).watch, true);
+    assert.equal(parseArgs(["docs", "--workers=4"], {}).workers, 4);
+    assert.equal(parseArgs(["docs", "workers=0"], {}).workers, 0);
+    assert.equal(parseArgs(["docs", "--workers=lots"], {}).workers, undefined);
   });
 });
 
@@ -177,7 +202,7 @@ describe("build", () => {
   let root;
   let result;
 
-  before(() => {
+  before(async () => {
     tmp = mkdtempSync(join(tmpdir(), "docs0-"));
     root = join(tmp, "project", "docs");
     writeTree(tmp, {
@@ -220,7 +245,7 @@ describe("build", () => {
       "project/docs/explain/b-loose.md": "# B loose\n",
       "project/docs/explain/a-sub/page.md": "# Sub page\n",
     });
-    result = build(root);
+    result = await build(root);
   });
 
   after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -344,18 +369,24 @@ describe("build", () => {
     assert.match(result.html, /:root\[data-theme="dark"\] \{/);
   });
 
-  it("omits the mermaid runtime when no page uses it", () => {
+  it("renders identically on worker threads", async () => {
+    const pooled = await build(root, { workers: 2 });
+    assert.equal(pooled.html, result.html);
+    assert.deepEqual([...pooled.warnings].sort(), [...result.warnings].sort());
+  });
+
+  it("omits the mermaid runtime when no page uses it", async () => {
     const dir = join(tmp, "plain");
     writeTree(dir, { "README.md": "# Plain\n" });
-    const plain = build(dir);
+    const plain = await build(dir);
     assert.ok(!plain.html.includes('id="docs0-mermaid"'));
     assert.ok(Buffer.byteLength(plain.html) < 200_000);
   });
 
-  it("throws on a missing root or empty tree", () => {
-    assert.throws(() => build(join(tmp, "nope")), /docs root not found/);
+  it("rejects on a missing root or empty tree", async () => {
+    await assert.rejects(build(join(tmp, "nope")), /docs root not found/);
     mkdirSync(join(tmp, "empty-root"));
-    assert.throws(() => build(join(tmp, "empty-root")), /no \.md files/);
+    await assert.rejects(build(join(tmp, "empty-root")), /no \.md files/);
   });
 });
 
@@ -373,72 +404,120 @@ describe("findPackage", () => {
 });
 
 describe("last updated dates", () => {
-  const hasGit = spawnSync("git", ["--version"]).status === 0;
-
-  it("falls back to mtime outside a git repository", () => {
+  it("uses the file's modified time", async () => {
     const dir = mkdtempSync(join(tmpdir(), "docs0-mtime-"));
     writeTree(dir, { "README.md": "# Home\n" });
     utimesSync(join(dir, "README.md"), new Date(2024, 1, 29, 12), new Date(2024, 1, 29, 12));
-    const res = build(dir);
+    const res = await build(dir);
     assert.equal(res.pages[0].updated, "2024-02-29");
     assert.match(res.html, /data-updated="2024-02-29"/);
     rmSync(dir, { recursive: true, force: true });
   });
-
-  it(
-    "uses the latest commit date per file, and mtime for dirty or untracked files",
-    { skip: !hasGit && "git not installed" },
-    () => {
-      const dir = mkdtempSync(join(tmpdir(), "docs0-git-"));
-      const git = (/** @type {string[]} */ args, date) =>
-        execFileSync("git", ["-C", dir, ...args], {
-          env: {
-            ...process.env,
-            GIT_AUTHOR_NAME: "t",
-            GIT_AUTHOR_EMAIL: "t@example.com",
-            GIT_COMMITTER_NAME: "t",
-            GIT_COMMITTER_EMAIL: "t@example.com",
-            GIT_AUTHOR_DATE: date,
-            GIT_COMMITTER_DATE: date,
-          },
-          stdio: "pipe",
-        });
-      git(["init", "-q"]);
-      writeTree(dir, { "docs/README.md": "# Home\n", "docs/a b/é.md": "# Old\n", "docs/dirty.md": "# D\n" });
-      git(["add", "."]);
-      git(["commit", "-qm", "one"], "2023-01-15T10:00:00Z");
-      writeTree(dir, { "docs/README.md": "# Home v2\n" });
-      git(["commit", "-qam", "two"], "2023-06-30T10:00:00Z");
-      writeTree(dir, { "docs/dirty.md": "# D changed\n", "docs/new.md": "# New\n" });
-      for (const f of ["dirty.md", "new.md"]) utimesSync(join(dir, "docs", f), new Date(2025, 0, 2, 12), new Date(2025, 0, 2, 12));
-
-      const dates = gitDates(join(dir, "docs"));
-      assert.equal(dates.get(join(dir, "docs", "README.md")), "2023-06-30");
-      assert.equal(dates.get(join(dir, "docs", "a b", "é.md")), "2023-01-15", "handles spaces and non-ASCII paths");
-      assert.ok(!dates.has(join(dir, "docs", "dirty.md")));
-
-      const byRel = Object.fromEntries(build(join(dir, "docs")).pages.map((p) => [p.rel, p.updated]));
-      assert.deepEqual(byRel, {
-        "README.md": "2023-06-30",
-        "a b/é.md": "2023-01-15",
-        "dirty.md": "2025-01-02",
-        "new.md": "2025-01-02",
-      });
-      rmSync(dir, { recursive: true, force: true });
-    },
-  );
 });
 
 describe("top bar", () => {
-  it("has the updated date slot and a zen toggle next to the theme toggle", () => {
+  it("has the updated date slot and a zen toggle next to the theme toggle", async () => {
     const dir = mkdtempSync(join(tmpdir(), "docs0-bar-"));
     writeTree(dir, { "README.md": "# Home\n" });
-    const { html } = build(dir);
+    const { html } = await build(dir);
     assert.match(html, /<code id="current-path"><\/code>\s*<time id="updated"/);
     assert.match(html, /<button id="zen-toggle"[\s\S]*?<\/button>\s*<button id="theme-toggle"/);
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Incremental builds (the engine behind --watch)
+// ---------------------------------------------------------------------------
+
+/**
+ * Rewrites a file with a new modified time, so the change is seen even when the size stays the same.
+ *
+ * @param {string} file - Path.
+ * @param {string|Buffer} body - Contents.
+ */
+function touch(file, body) {
+  writeFileSync(file, body);
+  const t = new Date(Date.now() + Math.floor(Math.random() * 1e6));
+  utimesSync(file, t, t);
+}
+
+for (const workers of [0, 2]) {
+  describe(`createBuilder (${workers ? "worker pool" : "inline"})`, () => {
+    let dir;
+    let builder;
+    before(() => {
+      dir = mkdtempSync(join(tmpdir(), "docs0-inc-"));
+      writeTree(dir, {
+        "README.md": "# Home\n\n[soon](later.md) ![pic](pixel.png)\n",
+        "a.md": "# A\n",
+        "b.md": "# B\n\n[a](a.md)\n",
+        "pixel.png": PNG,
+      });
+      builder = createBuilder(dir, { workers });
+    });
+    after(async () => {
+      await builder.close();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("renders everything first, then nothing when unchanged", async () => {
+      const first = await builder.build();
+      assert.equal(first.rendered, 3);
+      assert.equal(first.changed, true);
+      assert.ok(first.warnings.some((w) => w.includes("later.md is broken")));
+      const again = await builder.build();
+      assert.equal(again.rendered, 0);
+      assert.equal(again.changed, false);
+      assert.equal(again.html, first.html);
+    });
+
+    it("re-renders only an edited page, updating nav and neighbours' pager", async () => {
+      touch(join(dir, "a.md"), "# A renamed\n");
+      const r = await builder.build();
+      assert.equal(r.rendered, 1);
+      assert.match(r.html, /data-route="a">A renamed<\/a>/, "nav");
+      assert.match(article(r.html, "b"), /<small>Previous<\/small>A renamed/, "neighbour's pager");
+    });
+
+    it("re-renders pages linking to an added page, and to a removed one", async () => {
+      touch(join(dir, "later.md"), "# Later\n");
+      let r = await builder.build();
+      assert.equal(r.rendered, 2, "the new page and README, which links to it");
+      assert.match(article(r.html, ""), /href="#\/later"/);
+      assert.ok(!r.warnings.some((w) => w.includes("later.md")));
+      unlinkSync(join(dir, "later.md"));
+      r = await builder.build();
+      assert.equal(r.rendered, 1);
+      assert.equal(r.removed, 1);
+      assert.ok(r.warnings.some((w) => w.includes("later.md is broken")));
+    });
+
+    it("re-renders pages that inline a changed image", async () => {
+      const other = Buffer.from(PNG);
+      other[other.length - 5] ^= 1;
+      touch(join(dir, "pixel.png"), other);
+      const r = await builder.build();
+      assert.equal(r.rendered, 1);
+      assert.ok(article(r.html, "").includes(other.toString("base64")));
+    });
+
+    it(
+      "rejects when a page cannot be read, then recovers",
+      { skip: process.getuid?.() === 0 && "root ignores permissions" },
+      async () => {
+        const b = join(dir, "b.md");
+        touch(b, "# B locked\n");
+        chmodSync(b, 0o000);
+        await assert.rejects(builder.build(), /EACCES|permission/i);
+        chmodSync(b, 0o644);
+        const r = await builder.build();
+        assert.equal(r.rendered, 1);
+        assert.match(r.html, /B locked/);
+      },
+    );
+  });
+}
 
 // ---------------------------------------------------------------------------
 // CLI (end to end)
@@ -498,6 +577,38 @@ describe("CLI", () => {
     const loud = spawnSync(process.execPath, [...args, "-v"], { encoding: "utf8" });
     assert.equal(loud.stderr.match(/docs0: warning:/g)?.length, 2);
     assert.doesNotMatch(loud.stdout, /-v to list/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("--watch rebuilds once per burst of saves and stops cleanly on SIGINT", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "docs0-watch-"));
+    writeTree(dir, { "docs/README.md": "# Hi\n", "docs/a.md": "# A\n" });
+    const out = join(dir, "o.html");
+    const child = spawn(process.execPath, [CLI, join(dir, "docs"), `--out=${out}`, "--open=false", "--watch"]);
+    let stdout = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    const until = async (/** @type {() => boolean} */ ok, what) => {
+      const start = Date.now();
+      while (!ok()) {
+        if (Date.now() - start > 5000) assert.fail(`timed out waiting for ${what}\n${stdout}`);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    };
+    await until(() => stdout.includes("Watching"), "initial build");
+    for (let i = 0; i < 10; i++) writeFileSync(join(dir, "docs", "a.md"), `# A ${i}\n`);
+    await until(() => stdout.includes("↻"), "rebuild");
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(stdout.match(/↻/g).length, 1, "one rebuild for the burst");
+    assert.match(stdout, /1 page re-rendered/);
+    assert.match(readFileSync(out, "utf8"), /A 9/);
+    writeFileSync(join(dir, "docs", "notes.txt"), "not markdown");
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(stdout.match(/↻/g).length, 1, "unrelated files cause no rebuild");
+    const code = await new Promise((r) => {
+      child.on("exit", r);
+      child.kill("SIGINT");
+    });
+    assert.equal(code, 0);
     rmSync(dir, { recursive: true, force: true });
   });
 

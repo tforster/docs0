@@ -31,7 +31,8 @@ already have mid dev session without creating a copy of them.
 - **One file**: CSS, JS and images (as `data:` URIs) are embedded, plus an offline Mermaid fallback. Share it anywhere
 - **Folder → nav**: the folder hierarchy becomes a collapsible left nav, and numeric prefixes (`01-`) set the order
 - **Sticky in-page TOC**: a `## Table of Contents <!-- omit in toc -->` list becomes a right sidebar with scroll-spy
-- **Top bar**: DOCS0 branding, the current file path and its last-updated date (from git, falling back to the file's modified time), the version from the closest `package.json`, a zen mode toggle and a theme toggle
+- **Top bar**: DOCS0 branding, the current file path and its last-updated date (the file's modified time), the version from the closest `package.json`, a zen mode toggle and a theme toggle
+- **Watch mode**: `--watch` rebuilds on save, re-rendering only the pages a change affects (typically ~30 ms); refresh the tab to see it
 - **Zen mode**: hides both sidebars so the content fills the full width, and your choice is remembered
 - **Light and dark**: follows the system setting by default, and your choice is remembered
 - **Syntax highlighting**: 190+ languages via [highlight.js](https://github.com/highlightjs/highlight.js), done at build time
@@ -43,14 +44,16 @@ already have mid dev session without creating a copy of them.
 ## 2. Usage
 
 ```bash
-docs0 <docs-root> [--out=file.html] [--open=false] [-v|--verbose]
+docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N]
 ```
 
 | Flag                          | Default     | Description                                    |
 | :---------------------------- | :---------- | :--------------------------------------------- |
 | `--out=<file>` / `out=<file>` | temp folder | Output path; folders are created ¹             |
 | `--open=false` / `open=false` | `true`      | Don't open the browser (implied when `CI` set) |
+| `-w` / `--watch`              | `false`     | Rebuild on changes until Ctrl-C                |
 | `-v` / `--verbose`            | `false`     | List warnings (broken links, missing images)   |
+| `--workers=<n>`               | auto        | Render threads; `0` renders on the main thread |
 
 ¹ By default: `<os temp>/docs0/<project>-<hash>/index.html`. The path is stable per docs folder, so re-running refreshes the
 same file and an open tab only needs a reload. Inside GitHub Actions the `file` and `dir` locations are also written to

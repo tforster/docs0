@@ -18,6 +18,7 @@
     "eqeqeq": "error",
     "no-shadow": "off",
     "no-underscore-dangle": ["warn", { "allow": ["__dirname"] }],
-    "unicorn/no-array-sort": "off"
+    "unicorn/no-array-sort": "off",
+    "unicorn/require-post-message-target-origin": "off"
   }
 }

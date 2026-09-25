@@ -16,27 +16,43 @@
 
 ## Build pipeline
 
-The build is two passes so that pages can link to each other by route before any of them is rendered.
+A page's body never depends on another page's content or title, only on the site's file → route map, which comes from paths
+alone. So every page renders as an independent job, and only the cheap, site-wide parts (nav, pager, folder labels) are
+assembled on the main thread.
 
 ```mermaid
 flowchart LR
-  subgraph Pass 1
-    W[walk] --> L[lex] --> T[title + route]
+  S[scan: readdir + stat] --> M[file → route map]
+  M --> P{{render pool}}
+  subgraph P [render: inline or worker threads]
+    L[lex] --> X[extract TOC] --> R[render] --> C[callouts]
   end
-  subgraph Pass 2
-    R[render tokens] --> X[extract TOC] --> C[callouts]
-  end
-  T --> R
-  C --> H[assemble HTML]
+  C --> K[(cache per page)]
+  K --> A[assemble nav, pager, HTML]
+  A --> W[write tmp + rename]
 ```
 
+| Module                 | Runs on        | Job                                                    |
+| :--------------------- | :------------- | :----------------------------------------------------- |
+| `dist/docs0.js`        | main thread    | CLI, scan, worker pool, cache, assembly, watch         |
+| `dist/docs0.render.js` | main or worker | One page: Markdown → HTML, TOC, warnings, dependencies |
+| `dist/docs0.worker.js` | worker thread  | Receives routes and pages, returns render results      |
+| `dist/docs0.shared.js` | both           | Dependency-free helpers (escaping, slugs, routes)      |
+
+Trees below 40 pages render inline, because starting workers would cost more than it saves. Larger trees use one
+[`worker_threads`](https://nodejs.org/api/worker_threads.html) worker per spare core (up to 8). Each worker takes the next
+queued page as soon as it is free, so a few slow pages don't hold up the rest.
+
 ```javascript
-// Pass 2, per page (simplified)
-Object.assign(ctx, { file: p.file, route: p.route, slugs: new Map() });
-const tocTokens = extractToc(p.tokens); // removes "## Table of Contents" + list
-const body = applyCallouts(marked.parser(p.tokens));
-const toc = tocTokens ? marked.parser(tocTokens) : "";
+// Per page, in docs0.render.js (simplified)
+const tokens = marked.lexer(readFileSync(file, "utf8"));
+const tocTokens = extractToc(tokens); // removes "## Table of Contents" + list
+const body = applyCallouts(marked.parser(tokens));
+return { title, body, toc, mermaid, warnings, images, links };
 ```
+
+Each result records the local images it inlined and the link targets it resolved. In `--watch` mode, those let a rebuild re-render
+only the pages a change affects. See [Watch mode](01-cli.md#watch-mode).
 
 ## Output anatomy
 
@@ -65,6 +81,6 @@ and then each parent folder. If none is found the badge is omitted.
 
 ## Last updated dates
 
-The date beside the path in the top bar is the file's latest commit date, read from `git log` in a single pass (so it works in
-[jj](https://jj-vcs.github.io/jj/) colocated repos too). Files with uncommitted changes, untracked files, and builds outside a
-git checkout use the file's modified time instead. Dates are shown as `yyyy-mm-dd`.
+The date beside the path in the top bar is the file's modified time, shown as `yyyy-mm-dd`. It comes from the same `stat` the
+scan already makes, so it costs nothing and needs no version control. A fresh CI checkout sets every file's modified time to the
+checkout time. See [Publishing](../02-guides/04-publishing.md) for restoring real dates first.
