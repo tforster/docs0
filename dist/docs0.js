@@ -646,13 +646,14 @@ function buildHtml({ siteName, version, nav, articles, mermaid }) {
   <meta name="generator" content="DOCS0">
   <title>${esc(siteName)}</title>
   <script>
-    // Apply the theme and zen mode before first paint: stored choice, else the system preference
+    // Apply the theme, zen mode and collapsed nav before first paint: stored choice, else the system preference
     (function () {
       var t;
       try { t = localStorage.getItem("docs0-theme"); } catch (e) {}
       if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
       document.documentElement.dataset.theme = t;
       try { if (localStorage.getItem("docs0-zen") === "1") document.documentElement.classList.add("zen"); } catch (e) {}
+      try { if (localStorage.getItem("docs0-nav") === "collapsed") document.documentElement.classList.add("nav-collapsed"); } catch (e) {}
     })();
   </script>
   <style>
@@ -662,7 +663,7 @@ ${css}
 </head>
 <body>
   <header id="topbar">
-    <button id="nav-toggle" type="button" aria-label="Toggle navigation" aria-controls="nav" aria-expanded="false">&#9776;</button>
+    <button id="nav-toggle" type="button" aria-label="Toggle navigation" aria-controls="nav" aria-expanded="true" title="Hide navigation">&#9776;</button>
     <a id="brand" href="#/">${LOGO}<span>DOCS0</span></a>
     <span id="site-name">${esc(siteName)}</span>
     <code id="current-path"></code>

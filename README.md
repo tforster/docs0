@@ -31,8 +31,9 @@ already have mid dev session without creating a copy of them.
 - **One file**: CSS, JS and images (as `data:` URIs) are embedded, plus an offline Mermaid fallback. Share it anywhere
 - **Folder → nav**: the folder hierarchy becomes a collapsible left nav, and numeric prefixes (`01-`) set the order
 - **Sticky in-page TOC**: a `## Table of Contents <!-- omit in toc -->` list becomes a right sidebar with scroll-spy
-- **Top bar**: DOCS0 branding, the current file path and its last-updated date (the file's modified time), the version from the closest `package.json`, a zen mode toggle and a theme toggle
+- **Top bar**: a nav toggle, DOCS0 branding, the current file path and its last-updated date (the file's modified time), the version from the closest `package.json`, a zen mode toggle and a theme toggle
 - **Watch mode**: `--watch` rebuilds on save, re-rendering only the pages a change affects (typically ~30 ms); refresh the tab to see it
+- **Collapsible nav**: the ☰ button slides the left sidebar away so the page and its diagrams use the full width; remembered like the theme
 - **Zen mode**: hides both sidebars so the content fills the full width, and your choice is remembered
 - **Light and dark**: follows the system setting by default, and your choice is remembered
 - **Syntax highlighting**: 190+ languages via [highlight.js](https://github.com/highlightjs/highlight.js), done at build time

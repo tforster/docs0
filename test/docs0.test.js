@@ -422,6 +422,8 @@ describe("top bar", () => {
     const { html } = await build(dir);
     assert.match(html, /<code id="current-path"><\/code>\s*<time id="updated"/);
     assert.match(html, /<button id="zen-toggle"[\s\S]*?<\/button>\s*<button id="theme-toggle"/);
+    assert.match(html, /<header id="topbar">\s*<button id="nav-toggle"[^>]*aria-expanded="true"/);
+    assert.match(html, /localStorage\.getItem\("docs0-nav"\) === "collapsed"/, "collapsed nav restored before first paint");
     rmSync(dir, { recursive: true, force: true });
   });
 });

@@ -120,8 +120,17 @@
   });
 
   // ---------------------------------------------------------------------------
-  // Mobile nav
+  // Nav toggle — collapses the sidebar on wide screens (remembered), opens the off-canvas nav on narrow ones
   // ---------------------------------------------------------------------------
+
+  const narrow = matchMedia("(max-width: 800px)");
+
+  /** Reflects the nav's visibility on the toggle button for the current screen width. */
+  function syncNavToggle() {
+    const shown = narrow.matches ? document.body.classList.contains("nav-open") : !root.classList.contains("nav-collapsed");
+    navToggle.setAttribute("aria-expanded", String(shown));
+    navToggle.title = shown ? "Hide navigation" : "Show navigation";
+  }
 
   /**
    * Opens or closes the off-canvas nav on narrow screens.
@@ -130,10 +139,31 @@
    */
   function setNavOpen(open) {
     document.body.classList.toggle("nav-open", open);
-    navToggle.setAttribute("aria-expanded", String(open));
+    syncNavToggle();
   }
 
-  navToggle.addEventListener("click", () => setNavOpen(!document.body.classList.contains("nav-open")));
+  /**
+   * Collapses or restores the sidebar on wide screens.
+   *
+   * @param {boolean} collapsed - Desired state.
+   */
+  function setNavCollapsed(collapsed) {
+    root.classList.toggle("nav-collapsed", collapsed);
+    try {
+      localStorage.setItem("docs0-nav", collapsed ? "collapsed" : "open");
+    } catch {
+      // Storage unavailable — the choice lasts for this visit only
+    }
+    syncNavToggle();
+    updateSpy();
+  }
+
+  navToggle.addEventListener("click", () => {
+    if (narrow.matches) setNavOpen(!document.body.classList.contains("nav-open"));
+    else setNavCollapsed(!root.classList.contains("nav-collapsed"));
+  });
+  narrow.addEventListener("change", () => setNavOpen(false));
+  syncNavToggle();
   document.getElementById("scrim").addEventListener("click", () => setNavOpen(false));
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") setNavOpen(false);

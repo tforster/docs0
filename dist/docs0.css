@@ -197,10 +197,6 @@ body {
   border-color: var(--accent);
 }
 
-#nav-toggle {
-  display: none !important;
-}
-
 /* ---------------------------------------------------------------------------
  * Left nav
  * --------------------------------------------------------------------------- */
@@ -773,6 +769,48 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+ * Collapsed nav (wide screens) — the left sidebar slides away and the content, diagrams included, takes its width.
+ * Narrow screens ignore this: there the nav is off-canvas and the same button opens it.
+ * --------------------------------------------------------------------------- */
+
+@media (min-width: 801px) {
+  #nav {
+    transition: transform 0.2s;
+  }
+
+  #content {
+    transition: margin-left 0.2s;
+  }
+
+  :root.nav-collapsed #nav {
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition:
+      transform 0.2s,
+      visibility 0s 0.2s;
+  }
+
+  :root.nav-collapsed #content {
+    margin-left: 0;
+  }
+
+  :root.nav-collapsed .page {
+    max-width: none;
+  }
+
+  :root.nav-collapsed .page-main {
+    max-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #nav,
+  #content {
+    transition: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
  * Zen mode — no sidebars, content spans the full width
  * --------------------------------------------------------------------------- */
 
@@ -812,10 +850,6 @@ body {
 }
 
 @media (max-width: 800px) {
-  #nav-toggle {
-    display: grid !important;
-  }
-
   #site-name,
   #updated {
     display: none;
