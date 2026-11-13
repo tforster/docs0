@@ -45,20 +45,25 @@ already have mid dev session without creating a copy of them.
 ## 2. Usage
 
 ```bash
-docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N]
+docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N] [-V|--version]
 ```
 
 | Flag                          | Default     | Description                                    |
 | :---------------------------- | :---------- | :--------------------------------------------- |
 | `--out=<file>` / `out=<file>` | temp folder | Output path; folders are created ¹             |
-| `--open=false` / `open=false` | `true`      | Don't open the browser (implied when `CI` set) |
+| `--open=false` / `open=false` | `true`      | Don't serve/open (implied when `CI` set) ²     |
 | `-w` / `--watch`              | `false`     | Rebuild on changes until Ctrl-C                |
 | `-v` / `--verbose`            | `false`     | List warnings (broken links, missing images)   |
 | `--workers=<n>`               | auto        | Render threads; `0` renders on the main thread |
+| `-V` / `--version`            |             | Print the version and exit                     |
 
 ¹ By default: `<os temp>/docs0/<project>-<hash>/index.html`. The path is stable per docs folder, so re-running refreshes the
 same file and an open tab only needs a reload. Inside GitHub Actions the `file` and `dir` locations are also written to
 `GITHUB_OUTPUT`.
+
+² Otherwise the file is served on `http://localhost:33010` (override with `PORT`; a free port is used if it's taken) and that
+URL opens in the default browser (on WSL: the Windows one). Set `BROWSER` to a program's path to use that instead. Ctrl-C
+stops the server.
 
 ## 3. Writing Docs
 

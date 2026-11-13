@@ -2,13 +2,14 @@
 /* eslint-disable no-console */
 // docs0.js — DOCS0 markdown documentation compiler
 //
-// Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N]
+// Usage: see USAGE below, or docs0 --help
 //        npx @tforster/docs0 <docs-root>
 //
 // Walks the .md tree below <docs-root> and compiles it into ONE self-contained HTML file: CSS, JS, images (as data: URIs) and a
 // mermaid fallback runtime are all embedded. The folder hierarchy becomes the left nav, each page's
 // `## Table of Contents <!-- omit in toc -->` list becomes a sticky right sidebar, and hash routing (#/folder/page/section)
-// switches pages without a server. The output opens in the default browser unless open=false (e.g. in CI).
+// switches pages without a server. Unless open=false (e.g. in CI), the output is also served on http://localhost:PORT (default
+// 33010) and opened in the default browser; the process keeps serving until Ctrl-C.
 //
 // Pages are rendered by docs0.render.js — inline for small trees, on a pool of worker threads (docs0.worker.js) for large ones —
 // and cached, so --watch only re-renders what a change affects before reassembling the file.
@@ -30,10 +31,11 @@ import {
 } from "fs";
 import { resolve, dirname, extname, relative, join, basename, sep } from "path";
 import { fileURLToPath } from "url";
-import { execFile, execFileSync } from "child_process";
+import { execFile } from "child_process";
 import { createRequire } from "module";
-import { tmpdir, availableParallelism } from "os";
+import { tmpdir, availableParallelism, release } from "os";
 import { createHash } from "crypto";
+import { createServer } from "http";
 import { Worker } from "worker_threads";
 
 // Project dependencies
@@ -53,6 +55,9 @@ const LANDING_RE = /^(readme|index)\.md$/i;
 const WORKER_THRESHOLD = 40;
 /** Quiet period after the last file-system event before a watch rebuild starts. */
 const DEBOUNCE_MS = 75;
+/** Preferred port for the local server (override with PORT); a free one is picked when it's taken. */
+const DEFAULT_PORT = 33010;
+const USAGE = "Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N] [-V|--version]";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -94,30 +99,55 @@ export function routeFromRel(rel) {
 
 /**
  * Parses CLI arguments. Accepts `--open=false`, `open=false`, `--no-open`, `--out=file`, `out=file`, `-w`/`--watch`,
- * `-v`/`--verbose` and `--workers=N`/`workers=N`. Opening defaults to off when the CI environment variable is set.
+ * `-v`/`--verbose`, `-V`/`--version` and `--workers=N`/`workers=N`. Opening defaults to off when the CI environment
+ * variable is set; the server port comes from PORT (0 = any free port), falling back to 33010 when unset or invalid.
  *
  * @param {string[]} argv - Arguments after the script path.
  * @param {Record<string, string|undefined>} [env] - Environment.
  * @returns {{ root: string|undefined, out: string|undefined, open: boolean, watch: boolean, verbose: boolean,
- *   workers: number|undefined, help: boolean }} Parsed options; `out` is undefined unless given, meaning "use the temp-folder
- *   default", and `workers` is undefined unless given, meaning "decide from the page count".
+ *   workers: number|undefined, port: number, help: boolean, version: boolean }} Parsed options; `out` is undefined unless
+ *   given, meaning "use the temp-folder default", and `workers` is undefined unless given, meaning "decide from the page
+ *   count".
  */
 export function parseArgs(argv, env = process.env) {
   /** @type {Record<string, string>} */
   const flags = {};
   const positional = [];
   for (const arg of argv) {
-    const m = arg.match(/^(?:--)?(open|out|workers)=(.*)$/);
-    if (arg === "--no-open") flags.open = "false";
-    else if (arg === "--open") flags.open = "true";
-    else if (arg === "-h" || arg === "--help") flags.help = "true";
-    else if (arg === "-v" || arg === "--verbose") flags.verbose = "true";
-    else if (arg === "-w" || arg === "--watch") flags.watch = "true";
-    else if (m) flags[m[1]] = m[2];
-    else positional.push(arg);
+    switch (arg) {
+      case "--no-open":
+        flags.open = "false";
+        break;
+      case "--open":
+        flags.open = "true";
+        break;
+      case "-h":
+      case "--help":
+        flags.help = "true";
+        break;
+      case "-V":
+      case "--version":
+        flags.version = "true";
+        break;
+      case "-v":
+      case "--verbose":
+        flags.verbose = "true";
+        break;
+      case "-w":
+      case "--watch":
+        flags.watch = "true";
+        break;
+      default: {
+        // key=value options, with or without the leading --; anything else is positional
+        const m = arg.match(/^(?:--)?(open|out|workers)=(.*)$/);
+        if (m) flags[m[1]] = m[2];
+        else positional.push(arg);
+      }
+    }
   }
   const open = flags.open === undefined ? !env.CI : !/^(false|0|no|off)$/i.test(flags.open);
   const workers = /^\d+$/.test(flags.workers ?? "") ? Number(flags.workers) : undefined;
+  const port = /^\d+$/.test(env.PORT ?? "") && Number(env.PORT) <= 65535 ? Number(env.PORT) : DEFAULT_PORT;
   return {
     root: positional[0],
     out: flags.out || undefined,
@@ -125,7 +155,9 @@ export function parseArgs(argv, env = process.env) {
     watch: !!flags.watch,
     verbose: !!flags.verbose,
     workers,
+    port,
     help: !!flags.help,
+    version: !!flags.version,
   };
 }
 
@@ -699,17 +731,64 @@ ${articles}
 const quiet = () => {};
 
 /**
- * Opens a file in the default browser (macOS, Windows, WSL, Linux).
+ * Opens a URL in the default browser (macOS, Windows, WSL, Linux).
  *
- * @param {string} file - Absolute file path.
+ * @param {string} url - http(s) URL.
  */
-function openInBrowser(file) {
-  if (process.platform === "darwin") execFile("open", [file], quiet);
-  else if (process.platform === "win32") execFile("cmd", ["/c", "start", "", file], quiet);
-  else if (process.env.WSL_DISTRO_NAME) {
-    // explorer.exe needs a Windows path and always exits non-zero, hence the ignored callback
-    execFile("explorer.exe", [execFileSync("wslpath", ["-w", file]).toString().trim()], quiet);
-  } else execFile("xdg-open", [file], quiet);
+function openInBrowser(url) {
+  // BROWSER (the usual convention) names an explicit opener
+  if (process.env.BROWSER) execFile(process.env.BROWSER, [url], quiet);
+  else if (process.platform === "darwin") execFile("open", [url], quiet);
+  else if (process.platform === "win32") execFile("cmd", ["/c", "start", "", url], quiet);
+  // WSL: hand the URL to Windows. Detected from the kernel, since WSL_DISTRO_NAME is often missing (multiplexers, sudo); xdg-open
+  // usually has no browser there. explorer.exe always exits non-zero, hence the ignored callback.
+  else if (/microsoft/i.test(release())) {
+    // Windows' PATH isn't always appended inside WSL (appendWindowsPath=false), so prefer the absolute path when mounted
+    const explorer = "/mnt/c/Windows/explorer.exe";
+    execFile(existsSync(explorer) ? explorer : "explorer.exe", [url], quiet);
+  } else execFile("xdg-open", [url], quiet);
+}
+
+/**
+ * Serves the output file on localhost. The file is re-read per request, so a reload after a watch rebuild shows the new
+ * build. Everything is embedded and routing is by hash, so only `/` exists.
+ *
+ * @param {string} out - Absolute output path.
+ * @param {number} port - Preferred port; falls back to a free one when taken.
+ * @returns {Promise<string>} The server's URL.
+ */
+function serve(out, port) {
+  const server = createServer((req, res) => {
+    const path = (req.url ?? "/").split("?")[0];
+    if (path !== "/" && path !== "/index.html") {
+      res.writeHead(404);
+      res.end("not found");
+      return;
+    }
+    try {
+      const html = readFileSync(out);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(html);
+    } catch {
+      res.writeHead(500);
+      res.end("output unavailable");
+    }
+  });
+  return new Promise((ok, fail) => {
+    /** @param {NodeJS.ErrnoException} err */
+    const onError = (err) => {
+      if (err.code === "EADDRINUSE" && port !== 0) server.listen((port = 0), "127.0.0.1");
+      else fail(err);
+    };
+    server.on("error", onError);
+    server.once("listening", () => {
+      // Start-up is over: later errors are not ours to retry, and a settled promise would swallow them
+      server.off("error", onError);
+      const addr = /** @type {import("net").AddressInfo} */ (server.address());
+      ok(`http://localhost:${addr.port}`);
+    });
+    server.listen(port, "127.0.0.1");
+  });
 }
 
 /**
@@ -804,8 +883,12 @@ function watchDocs(builder, root, out, verbose) {
 /** Entry point when run as a command. */
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  if (opts.version) {
+    console.log(findPackage(__dirname).version);
+    process.exit(0);
+  }
   if (opts.help || !opts.root) {
-    console.error("Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N]");
+    console.error(USAGE);
     process.exit(opts.help ? 0 : 1);
   }
 
@@ -834,7 +917,13 @@ async function main() {
   console.log(
     `   ${result.pages.length} pages from ${resolve(opts.root)} · ${kb} KB · ${(performance.now() - started).toFixed(0)} ms${warningHint(result.warnings.length, opts.verbose)}\n`,
   );
-  if (opts.open) openInBrowser(out);
+  if (opts.open) {
+    const url = await serve(out, opts.port);
+    console.log(`   Serving → ${url}${opts.watch ? "" : " · Ctrl-C to stop"}`);
+    openInBrowser(url);
+    // Ctrl-C is the normal way out, so exit 0 (watch mode installs its own handler that also stops the workers)
+    if (!opts.watch) for (const sig of ["SIGINT", "SIGTERM"]) process.once(sig, () => process.exit(0));
+  }
   if (opts.watch) watchDocs(builder, resolve(opts.root), out, opts.verbose);
   else await builder.close();
 }

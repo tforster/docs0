@@ -14,7 +14,7 @@
 ## Synopsis
 
 ```bash
-docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N]
+docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N] [-V|--version]
 ```
 
 ## Arguments
@@ -30,25 +30,28 @@ Flags may be written with or without the leading `--`.
 | Flag                            | Default     | Description                                                                                   |
 | :------------------------------ | :---------- | :-------------------------------------------------------------------------------------------- |
 | `--out=<file>` / `out=<file>`   | temp folder | Output path, relative to the current directory. Folders are created. See [Output](#output).   |
-| `--open=false` / `open=false`   | `true`      | Skip opening the result in the default browser.                                               |
+| `--open=false` / `open=false`   | `true`      | Skip serving the result on localhost and opening it in the default browser.                   |
 | `--no-open`                     |             | Same as `--open=false`.                                                                       |
 | `-w`, `--watch`                 | `false`     | Keep running and rebuild after changes. See [Watch mode](#watch-mode).                        |
 | `-v`, `--verbose`               | `false`     | List each warning (broken link, missing image). Otherwise only a count is shown.              |
 | `--workers=<n>` / `workers=<n>` | auto        | Render threads. Auto uses none below 40 pages, else one per spare core (max 8). `0` = inline. |
 | `-h`, `--help`                  |             | Print usage and exit.                                                                         |
+| `-V`, `--version`               |             | Print the installed version and exit.                                                         |
 
 ## Environment
 
 | Variable        | Effect                                                                                    |
 | :-------------- | :---------------------------------------------------------------------------------------- |
-| `CI`            | When set, the browser is not opened unless `--open=true` is given.                        |
+| `CI`            | When set, nothing is served or opened unless `--open=true` is given.                      |
+| `PORT`          | Preferred port for the local server (default `33010`); a free one is used if it's taken.  |
+| `BROWSER`       | Path to the program that opens the URL, replacing the platform default (see below).       |
 | `GITHUB_OUTPUT` | When set (GitHub Actions), `file=<path>` and `dir=<folder>` are appended for later steps. |
 
 ## Exit codes
 
 | Code | Meaning                                                  |
 | ---: | :------------------------------------------------------- |
-|  `0` | Success, or `--watch` stopped with Ctrl-C                |
+|  `0` | Success, or the server / `--watch` stopped with Ctrl-C   |
 |  `1` | Missing argument, docs root not found, or no `.md` files |
 
 ## Output
@@ -59,6 +62,14 @@ $ docs0 docs --open=false
 📚  DOCS0 → /tmp/docs0/my-project-3f9a1c2e/index.html
    13 pages from /home/me/project/docs · 3190 KB · 85 ms
 ```
+
+Unless `--open=false`, DOCS0 then serves the file on `http://localhost:<PORT>` (127.0.0.1 only), opens that URL in the default
+browser and keeps running until Ctrl-C. The file is re-read per request, so with `--watch` a reload shows the latest build.
+
+The URL is opened with `open` on macOS, `start` on Windows and `xdg-open` on Linux. Under WSL (detected from the kernel) it
+goes to Windows via `/mnt/c/Windows/explorer.exe`, so your Windows default browser opens it even when Windows' PATH isn't
+appended. Set `BROWSER` to a program's path to use that instead; it receives the URL as its only argument, e.g.
+`export BROWSER="/mnt/c/Program Files/Google/Chrome/Application/chrome.exe"` for Chrome from WSL.
 
 When there are warnings and `--verbose` is off, the summary ends with `· 3 warnings (-v to list)`.
 
