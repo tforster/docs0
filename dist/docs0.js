@@ -114,15 +114,36 @@ export function parseArgs(argv, env = process.env) {
   const flags = {};
   const positional = [];
   for (const arg of argv) {
-    const m = arg.match(/^(?:--)?(open|out|workers)=(.*)$/);
-    if (arg === "--no-open") flags.open = "false";
-    else if (arg === "--open") flags.open = "true";
-    else if (arg === "-h" || arg === "--help") flags.help = "true";
-    else if (arg === "-V" || arg === "--version") flags.version = "true";
-    else if (arg === "-v" || arg === "--verbose") flags.verbose = "true";
-    else if (arg === "-w" || arg === "--watch") flags.watch = "true";
-    else if (m) flags[m[1]] = m[2];
-    else positional.push(arg);
+    switch (arg) {
+      case "--no-open":
+        flags.open = "false";
+        break;
+      case "--open":
+        flags.open = "true";
+        break;
+      case "-h":
+      case "--help":
+        flags.help = "true";
+        break;
+      case "-V":
+      case "--version":
+        flags.version = "true";
+        break;
+      case "-v":
+      case "--verbose":
+        flags.verbose = "true";
+        break;
+      case "-w":
+      case "--watch":
+        flags.watch = "true";
+        break;
+      default: {
+        // key=value options, with or without the leading --; anything else is positional
+        const m = arg.match(/^(?:--)?(open|out|workers)=(.*)$/);
+        if (m) flags[m[1]] = m[2];
+        else positional.push(arg);
+      }
+    }
   }
   const open = flags.open === undefined ? !env.CI : !/^(false|0|no|off)$/i.test(flags.open);
   const workers = /^\d+$/.test(flags.workers ?? "") ? Number(flags.workers) : undefined;
