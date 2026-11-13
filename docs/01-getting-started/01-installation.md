@@ -44,8 +44,11 @@ npm install --save-dev @tforster/docs0
 ## Verifying
 
 ```console
+$ docs0 --version
+0.2.0
+
 $ docs0 --help
-Usage: docs0 <docs-root> [--out=docs.html] [--open=false]
+Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N] [-V|--version]
 ```
 
 > [!NOTE]

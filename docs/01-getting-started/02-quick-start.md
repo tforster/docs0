@@ -47,8 +47,8 @@ docs/
 npx @tforster/docs0 docs
 ```
 
-DOCS0 writes the site to `<os temp>/docs0/<project>-<hash>/index.html` and opens it in your default browser. Your repo stays
-clean, and re-running refreshes the same file.
+DOCS0 writes the site to `<os temp>/docs0/<project>-<hash>/index.html`, serves it on `http://localhost:33010` and opens that
+in your default browser (Ctrl-C stops the server). Your repo stays clean, and re-running refreshes the same file.
 
 ## 3. Watch while you write
 
