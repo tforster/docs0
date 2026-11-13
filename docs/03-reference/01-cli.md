@@ -44,6 +44,7 @@ Flags may be written with or without the leading `--`.
 | :-------------- | :---------------------------------------------------------------------------------------- |
 | `CI`            | When set, nothing is served or opened unless `--open=true` is given.                      |
 | `PORT`          | Preferred port for the local server (default `33010`); a free one is used if it's taken.  |
+| `BROWSER`       | Path to the program that opens the URL, replacing the platform default (see below).       |
 | `GITHUB_OUTPUT` | When set (GitHub Actions), `file=<path>` and `dir=<folder>` are appended for later steps. |
 
 ## Exit codes
@@ -64,6 +65,11 @@ $ docs0 docs --open=false
 
 Unless `--open=false`, DOCS0 then serves the file on `http://localhost:<PORT>` (127.0.0.1 only), opens that URL in the default
 browser and keeps running until Ctrl-C. The file is re-read per request, so with `--watch` a reload shows the latest build.
+
+The URL is opened with `open` on macOS, `start` on Windows and `xdg-open` on Linux. Under WSL (detected from the kernel) it
+goes to Windows via `/mnt/c/Windows/explorer.exe`, so your Windows default browser opens it even when Windows' PATH isn't
+appended. Set `BROWSER` to a program's path to use that instead; it receives the URL as its only argument, e.g.
+`export BROWSER="/mnt/c/Program Files/Google/Chrome/Application/chrome.exe"` for Chrome from WSL.
 
 When there are warnings and `--verbose` is off, the summary ends with `· 3 warnings (-v to list)`.
 

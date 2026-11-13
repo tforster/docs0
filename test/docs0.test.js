@@ -17,6 +17,8 @@ import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createServer as createNetServer } from "node:net";
+import { once } from "node:events";
 
 import {
   build,
@@ -144,6 +146,7 @@ describe("parseArgs", () => {
       watch: false,
       verbose: false,
       workers: undefined,
+      port: 33010,
       help: false,
       version: false,
     });
@@ -161,7 +164,12 @@ describe("parseArgs", () => {
     assert.equal(parseArgs(["docs"], { CI: "true" }).open, false);
     assert.equal(parseArgs(["docs", "--open=true"], { CI: "true" }).open, true);
   });
-  it("flags help", () => {
+  it("reads PORT, falling back to 33010 when unset or invalid", () => {
+    assert.equal(parseArgs(["docs"], { PORT: "8080" }).port, 8080);
+    assert.equal(parseArgs(["docs"], { PORT: "0" }).port, 0);
+    for (const bad of ["", "abc", "-1", "70000", "80.5"]) assert.equal(parseArgs(["docs"], { PORT: bad }).port, 33010, bad);
+  });
+  it("flags help, version and verbose", () => {
     assert.equal(parseArgs(["--help"], {}).help, true);
     assert.equal(parseArgs(["-V"], {}).version, true);
     assert.equal(parseArgs(["--version"], {}).version, true);
@@ -566,7 +574,7 @@ describe("CLI", () => {
   });
 
   it("prints the package version with -V", () => {
-    const { version } = JSON.parse(readFileSync(resolve(dirname(CLI), "../package.json"), "utf8"));
+    const { version } = findPackage(dirname(CLI));
     assert.equal(execFileSync(process.execPath, [CLI, "-V"], { encoding: "utf8" }).trim(), version);
   });
 
@@ -623,37 +631,49 @@ describe("CLI", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("serves the output on localhost and opens that URL unless open=false", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "docs0-serve-"));
-    writeTree(dir, { "docs/README.md": "# Hi\n" });
-    // A stand-in browser records the URL instead of launching anything
-    const opener = join(dir, "browser");
-    writeFileSync(opener, `#!/bin/sh\necho "$1" > "${join(dir, "opened")}"\n`);
-    chmodSync(opener, 0o755);
-    const { CI: _ci, ...base } = process.env;
-    const env = { ...base, BROWSER: opener, PORT: "0" };
-    const child = spawn(process.execPath, [CLI, join(dir, "docs"), `--out=${join(dir, "o.html")}`], { env });
-    let stdout = "";
-    child.stdout.on("data", (d) => (stdout += d));
-    try {
-      const start = Date.now();
-      while (!/Serving → (\S+)/.test(stdout) || !existsSync(join(dir, "opened"))) {
-        if (Date.now() - start > 5000) assert.fail(`timed out waiting for server\n${stdout}`);
-        await new Promise((r) => setTimeout(r, 20));
+  it(
+    "serves on localhost (free port when PORT is taken), opens that URL, exits 0 on Ctrl-C",
+    { skip: process.platform === "win32" && "stub browser is a shell script" },
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "docs0-serve-"));
+      writeTree(dir, { "docs/README.md": "# Hi\n" });
+      // A stand-in browser records the URL instead of launching anything
+      const opener = join(dir, "browser");
+      writeFileSync(opener, `#!/bin/sh\necho "$1" > "${join(dir, "opened")}"\n`);
+      chmodSync(opener, 0o755);
+      // Occupy a port and ask for it, so the free-port fallback runs
+      const busy = createNetServer().listen(0, "127.0.0.1");
+      await once(busy, "listening");
+      const taken = /** @type {import("node:net").AddressInfo} */ (busy.address()).port;
+      const { CI: _ci, ...base } = process.env;
+      const env = { ...base, BROWSER: opener, PORT: String(taken) };
+      const child = spawn(process.execPath, [CLI, join(dir, "docs"), `--out=${join(dir, "o.html")}`], { env });
+      let stdout = "";
+      child.stdout.on("data", (d) => (stdout += d));
+      const exited = once(child, "exit");
+      try {
+        const start = Date.now();
+        while (!/Serving → (\S+)/.test(stdout) || !existsSync(join(dir, "opened"))) {
+          if (Date.now() - start > 5000) assert.fail(`timed out waiting for server\n${stdout}`);
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        const url = /** @type {RegExpMatchArray} */ (stdout.match(/Serving → (\S+)/))[1];
+        assert.match(url, /^http:\/\/localhost:\d+$/);
+        assert.notEqual(url, `http://localhost:${taken}`);
+        const res = await fetch(`${url}/`);
+        assert.equal(res.status, 200);
+        assert.match(await res.text(), /<h1 data-anchor="hi">Hi/);
+        assert.equal((await fetch(`${url}/nope`)).status, 404);
+        assert.equal(readFileSync(join(dir, "opened"), "utf8").trim(), url);
+      } finally {
+        child.kill("SIGINT");
+        const [code] = await exited;
+        busy.close();
+        rmSync(dir, { recursive: true, force: true });
+        assert.equal(code, 0);
       }
-      const url = /** @type {RegExpMatchArray} */ (stdout.match(/Serving → (\S+)/))[1];
-      assert.match(url, /^http:\/\/localhost:\d+$/);
-      const res = await fetch(`${url}/`);
-      assert.equal(res.status, 200);
-      assert.match(await res.text(), /<h1 data-anchor="hi">Hi/);
-      assert.equal((await fetch(`${url}/nope`)).status, 404);
-      assert.equal(readFileSync(join(dir, "opened"), "utf8").trim(), url);
-    } finally {
-      child.kill("SIGINT");
-      await new Promise((r) => child.on("exit", r));
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it("builds this repo's docs without warnings", () => {
     const out = join(mkdtempSync(join(tmpdir(), "docs0-self-")), "docs.html");

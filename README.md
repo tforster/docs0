@@ -62,7 +62,8 @@ same file and an open tab only needs a reload. Inside GitHub Actions the `file` 
 `GITHUB_OUTPUT`.
 
 ² Otherwise the file is served on `http://localhost:33010` (override with `PORT`; a free port is used if it's taken) and that
-URL opens in the default browser. Ctrl-C stops the server.
+URL opens in the default browser (on WSL: the Windows one). Set `BROWSER` to a program's path to use that instead. Ctrl-C
+stops the server.
 
 ## 3. Writing Docs
 

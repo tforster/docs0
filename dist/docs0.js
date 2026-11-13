@@ -2,7 +2,7 @@
 /* eslint-disable no-console */
 // docs0.js — DOCS0 markdown documentation compiler
 //
-// Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N] [-V|--version]
+// Usage: see USAGE below, or docs0 --help
 //        npx @tforster/docs0 <docs-root>
 //
 // Walks the .md tree below <docs-root> and compiles it into ONE self-contained HTML file: CSS, JS, images (as data: URIs) and a
@@ -56,7 +56,8 @@ const WORKER_THRESHOLD = 40;
 /** Quiet period after the last file-system event before a watch rebuild starts. */
 const DEBOUNCE_MS = 75;
 /** Preferred port for the local server (override with PORT); a free one is picked when it's taken. */
-const PORT = Number(process.env.PORT ?? 33010);
+const DEFAULT_PORT = 33010;
+const USAGE = "Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N] [-V|--version]";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -98,13 +99,15 @@ export function routeFromRel(rel) {
 
 /**
  * Parses CLI arguments. Accepts `--open=false`, `open=false`, `--no-open`, `--out=file`, `out=file`, `-w`/`--watch`,
- * `-v`/`--verbose`, `-V`/`--version` and `--workers=N`/`workers=N`. Opening defaults to off when the CI environment variable is set.
+ * `-v`/`--verbose`, `-V`/`--version` and `--workers=N`/`workers=N`. Opening defaults to off when the CI environment
+ * variable is set; the server port comes from PORT (0 = any free port), falling back to 33010 when unset or invalid.
  *
  * @param {string[]} argv - Arguments after the script path.
  * @param {Record<string, string|undefined>} [env] - Environment.
  * @returns {{ root: string|undefined, out: string|undefined, open: boolean, watch: boolean, verbose: boolean,
- *   workers: number|undefined, help: boolean, version: boolean }} Parsed options; `out` is undefined unless given, meaning "use the temp-folder
- *   default", and `workers` is undefined unless given, meaning "decide from the page count".
+ *   workers: number|undefined, port: number, help: boolean, version: boolean }} Parsed options; `out` is undefined unless
+ *   given, meaning "use the temp-folder default", and `workers` is undefined unless given, meaning "decide from the page
+ *   count".
  */
 export function parseArgs(argv, env = process.env) {
   /** @type {Record<string, string>} */
@@ -123,6 +126,7 @@ export function parseArgs(argv, env = process.env) {
   }
   const open = flags.open === undefined ? !env.CI : !/^(false|0|no|off)$/i.test(flags.open);
   const workers = /^\d+$/.test(flags.workers ?? "") ? Number(flags.workers) : undefined;
+  const port = /^\d+$/.test(env.PORT ?? "") && Number(env.PORT) <= 65535 ? Number(env.PORT) : DEFAULT_PORT;
   return {
     root: positional[0],
     out: flags.out || undefined,
@@ -130,6 +134,7 @@ export function parseArgs(argv, env = process.env) {
     watch: !!flags.watch,
     verbose: !!flags.verbose,
     workers,
+    port,
     help: !!flags.help,
     version: !!flags.version,
   };
@@ -749,11 +754,15 @@ function serve(out, port) {
     }
   });
   return new Promise((ok, fail) => {
-    server.on("error", (/** @type {NodeJS.ErrnoException} */ err) => {
+    /** @param {NodeJS.ErrnoException} err */
+    const onError = (err) => {
       if (err.code === "EADDRINUSE" && port !== 0) server.listen((port = 0), "127.0.0.1");
       else fail(err);
-    });
+    };
+    server.on("error", onError);
     server.once("listening", () => {
+      // Start-up is over: later errors are not ours to retry, and a settled promise would swallow them
+      server.off("error", onError);
       const addr = /** @type {import("net").AddressInfo} */ (server.address());
       ok(`http://localhost:${addr.port}`);
     });
@@ -854,13 +863,11 @@ function watchDocs(builder, root, out, verbose) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.version) {
-    console.log(JSON.parse(readFileSync(resolve(__dirname, "../package.json"), "utf8")).version);
+    console.log(findPackage(__dirname).version);
     process.exit(0);
   }
   if (opts.help || !opts.root) {
-    console.error(
-      "Usage: docs0 <docs-root> [--out=file.html] [--open=false] [-w|--watch] [-v|--verbose] [--workers=N] [-V|--version]",
-    );
+    console.error(USAGE);
     process.exit(opts.help ? 0 : 1);
   }
 
@@ -890,9 +897,11 @@ async function main() {
     `   ${result.pages.length} pages from ${resolve(opts.root)} · ${kb} KB · ${(performance.now() - started).toFixed(0)} ms${warningHint(result.warnings.length, opts.verbose)}\n`,
   );
   if (opts.open) {
-    const url = await serve(out, PORT);
+    const url = await serve(out, opts.port);
     console.log(`   Serving → ${url}${opts.watch ? "" : " · Ctrl-C to stop"}`);
     openInBrowser(url);
+    // Ctrl-C is the normal way out, so exit 0 (watch mode installs its own handler that also stops the workers)
+    if (!opts.watch) for (const sig of ["SIGINT", "SIGTERM"]) process.once(sig, () => process.exit(0));
   }
   if (opts.watch) watchDocs(builder, resolve(opts.root), out, opts.verbose);
   else await builder.close();
